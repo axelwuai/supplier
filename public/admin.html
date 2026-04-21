@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>货盘收集与比价后台</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <span class="hero-badge">Supplier Pricing Hub</span>
+          <h1>货盘上传、整理、分析，在一个工作台里完成。</h1>
+          <p>
+            先完成大模型配置，再新建批次并一次上传多个供应商货盘。系统会先自动解析导入，
+            需要时再手动启动 AI 汇总分析或字段整理。
+          </p>
+        </div>
+        <div class="hero-side">
+          <details id="settings-details" class="settings-flyout">
+            <summary class="settings-icon-button" aria-label="设置">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.03 7.03 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 2h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.58.23-1.12.54-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.48a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.5.39 1.05.71 1.63.94l.36 2.54a.5.5 0 0 0 .49.42h3.8a.5.5 0 0 0 .49-.42l.36-2.54c.58-.23 1.12-.54 1.63-.94l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"
+                />
+              </svg>
+            </summary>
+
+            <div class="settings-flyout-panel">
+              <div class="settings-flyout-head">
+                <div>
+                  <strong>设置</strong>
+                  <span id="settings-summary-text">未配置</span>
+                </div>
+              </div>
+
+              <section class="settings-section">
+                <div class="settings-section-head">
+                  <strong>群接龙登录</strong>
+                  <span id="qjl-auth-summary">未登录</span>
+                </div>
+
+                <div id="qjl-auth-status" class="callout subtle-callout">
+                  登录后会基于群接龙主页信息生成用户画像，并在货盘分析时自动带入。
+                </div>
+
+                <div id="qjl-login-link" class="callout subtle-callout" hidden></div>
+
+                <div id="qjl-profile-preview" class="account-card" hidden>
+                  <div class="account-card-head">
+                    <strong id="qjl-profile-name">群接龙用户</strong>
+                    <span id="qjl-profile-meta"></span>
+                  </div>
+                  <p id="qjl-profile-summary"></p>
+                  <div id="qjl-profile-tags" class="tag-list"></div>
+                </div>
+
+                <div class="dual-actions">
+                  <button type="button" id="qjl-login-start">开始登录</button>
+                  <button type="button" id="qjl-login-check" class="ghost-button">检查登录</button>
+                </div>
+
+                <div class="dual-actions compact-actions">
+                  <button type="button" id="qjl-refresh-profile" class="ghost-button">更新画像</button>
+                  <button type="button" id="qjl-logout" class="ghost-button">退出登录</button>
+                </div>
+              </section>
+
+              <form id="llm-config-form" class="stack-form compact-form">
+                <label>
+                  模型供应方式
+                  <select name="provider">
+                    <option value="dashscope-compatible">OpenAI 兼容接口</option>
+                  </select>
+                </label>
+
+                <label>
+                  接口地址
+                  <input
+                    type="text"
+                    name="baseUrl"
+                    placeholder="例如：https://dashscope.aliyuncs.com/compatible-mode/v1"
+                    required
+                  />
+                </label>
+
+                <label>
+                  模型名称
+                  <input type="text" name="model" placeholder="例如：qwen-plus-latest" required />
+                </label>
+
+                <label>
+                  API Key
+                  <input type="password" name="apiKey" placeholder="留空则保留当前已保存的 Key" />
+                </label>
+
+                <div class="dual-actions">
+                  <button type="submit">保存配置</button>
+                  <button type="button" id="clear-llm-config" class="ghost-button">清空配置</button>
+                </div>
+              </form>
+
+              <div id="llm-config-status" class="callout subtle-callout"></div>
+            </div>
+          </details>
+        </div>
+      </header>
+
+      <main class="dashboard workspace-layout">
+        <section class="panel detail-panel chat-shell">
+          <div id="empty-state" class="empty-state">
+            <div class="chat-welcome" aria-hidden="true"></div>
+          </div>
+
+          <div id="detail-content" class="chat-workspace" hidden>
+            <div class="detail-header chat-topbar">
+              <div>
+                <span class="hero-badge" id="detail-badge">当前批次</span>
+                <h2 id="detail-name"></h2>
+                <p id="detail-description"></p>
+              </div>
+              <button type="button" id="clear-chat" class="link-button">清空对话</button>
+            </div>
+
+            <section class="chat-panel">
+              <div id="chat-selection-status" class="chat-selection-status"></div>
+              <div id="chat-messages" class="chat-messages"></div>
+
+              <form id="chat-form" class="chat-composer">
+                <textarea
+                  id="chat-input"
+                  name="message"
+                  rows="3"
+                  placeholder="输入你想让 AI 分析的问题，比如：比较这些货盘的价格带、品类覆盖和风险点"
+                ></textarea>
+                <div class="chat-composer-footer">
+                  <span class="chat-composer-hint">Shift + Enter 换行</span>
+                  <button type="submit">发送</button>
+                </div>
+              </form>
+            </section>
+          </div>
+        </section>
+
+        <div
+          id="workspace-resizer"
+          class="workspace-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="调整左右面板宽度"
+          tabindex="0"
+        ></div>
+
+        <aside class="workspace-sidebar">
+          <section class="panel uploads-panel">
+            <div class="sub-panel-header">
+              <h3>历史货盘批次列表</h3>
+              <div class="header-actions">
+                <button
+                  type="button"
+                  id="toggle-upload-entry"
+                  class="link-button"
+                  aria-expanded="false"
+                  aria-controls="upload-entry-panel"
+                >
+                  上传货盘
+                </button>
+                <button type="button" id="refresh-uploads" class="link-button">刷新</button>
+              </div>
+            </div>
+            <section id="upload-entry-panel" class="upload-entry-panel-inline" hidden>
+              <div class="upload-entry-inline-head">
+                <div>
+                  <strong>新建收集批次</strong>
+                  <span>上传多个 Excel / CSV 文件，系统会自动归入同一批次。</span>
+                </div>
+                <button type="button" id="close-upload-entry" class="link-button">收起</button>
+              </div>
+
+              <form id="create-form" class="stack-form compact-stack-form">
+                <label>
+                  批次名称
+                  <input type="text" name="name" placeholder="例如：5月水果备选货盘" required />
+                </label>
+
+                <label>
+                  备注说明
+                  <textarea
+                    name="description"
+                    rows="4"
+                    placeholder="例如：请重点收集供货价、库存、起订量和到货时效。"
+                  ></textarea>
+                </label>
+
+                <label>
+                  货盘文件
+                  <input type="file" name="files" accept=".xlsx,.xls,.csv" multiple required />
+                </label>
+
+                <div class="form-helper">
+                  <span>支持一次选择多个 Excel / CSV 文件，系统默认使用文件名作为供应商名称。</span>
+                </div>
+
+                <button type="submit">创建批次并上传</button>
+              </form>
+
+              <div id="create-result" class="callout" hidden></div>
+            </section>
+            <div class="selection-toolbar">
+              <label class="checkbox-label">
+                <input type="checkbox" id="toggle-all-uploads" />
+                <span>全选历史列表</span>
+              </label>
+              <span id="selected-upload-count" class="selection-count">已选 0 份</span>
+            </div>
+            <div id="upload-table" class="table-wrap sidebar-table-wrap"></div>
+            <div class="uploads-footer">
+              <button type="button" id="send-selected-to-ai" class="panel-action-button" disabled>发送给AI</button>
+            </div>
+          </section>
+        </aside>
+      </main>
+
+      <section class="panel compare-panel compare-panel-bottom">
+        <div class="sub-panel-header">
+          <h3>比价查询</h3>
+        </div>
+
+        <form id="compare-form" class="compare-form">
+          <input type="text" name="keyword" placeholder="搜索商品名 / SKU / 规格 / 供应商" />
+          <select name="groupBy">
+            <option value="smart">智能分组</option>
+            <option value="sku">优先按 SKU</option>
+            <option value="name">按商品名 + 规格</option>
+          </select>
+          <button type="submit">开始比价</button>
+        </form>
+
+        <div id="compare-result" class="compare-result"></div>
+      </section>
+    </div>
+
+    <script src="/admin.js"></script>
+  </body>
+</html>

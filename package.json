@@ -1,0 +1,23 @@
+{
+  "name": "supplier-pricing-hub",
+  "version": "1.0.0",
+  "description": "微信群供应商货盘收集与比价 MVP",
+  "main": "server.js",
+  "scripts": {
+    "dev": "node --watch server.js",
+    "start": "node server.js"
+  },
+  "keywords": [
+    "excel",
+    "upload",
+    "pricing",
+    "suppliers"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^12.2.0",
+    "express": "^5.1.0",
+    "multer": "^2.0.2",
+    "xlsx": "^0.18.5"
+  }
+}
