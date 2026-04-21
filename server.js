@@ -8,19 +8,26 @@ const crypto = require("crypto");
 
 const app = express();
 const rootDir = __dirname;
+loadLocalEnvFiles([
+  path.join(rootDir, ".env.local"),
+  path.join(rootDir, ".env")
+]);
 const publicDir = path.join(rootDir, "public");
 const dataDir = path.join(rootDir, "data");
 const tempUploadDir = path.join(dataDir, "uploads_tmp");
 const catalogUploadDir = path.join(dataDir, "catalog_uploads");
 const legacyUploadDir = path.join(dataDir, "uploads");
 const dbPath = path.join(dataDir, "app.db");
-const port = Number(process.env.PORT || 3000);
+const port = Number(process.env.PORT || 3002);
 const maxUploadSize = 50 * 1024 * 1024;
 const defaultAiProvider = "dashscope-compatible";
 const defaultAiBaseUrl = process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1";
 const defaultAiModel = process.env.DASHSCOPE_MODEL || "qwen-plus-latest";
 const defaultQjlAuthBase = process.env.QJL_AUTH_BASE || "http://81.68.227.162:3367";
 const defaultQjlApiBase = process.env.QJL_API_BASE || "https://apipro.qunjielong.com";
+const defaultOneboundApiBase = process.env.ONEBOUND_API_BASE || "https://api-gw.onebound.cn";
+const defaultOneboundApiKey = process.env.ONEBOUND_API_KEY || "";
+const defaultOneboundApiSecret = process.env.ONEBOUND_API_SECRET || "";
 
 const qjlBaseHeaders = {
   "feature-tag": "f0000",
@@ -40,6 +47,21 @@ const qjlMiniRoutes = {
   homepage: "pro/pages/homepage/group-homepage/group-homepage",
   homepageList: "pro/pages/homepage/group-homepage/group-homepage",
   dataOverview: "pro/pages/data-analyse/data-analyse-v2-overview-page/data-analyse-v2-overview-page"
+};
+
+const externalCompareSources = {
+  "1688": {
+    path: "/1688/item_search/",
+    label: "1688"
+  },
+  jd: {
+    path: "/jd/item_search/",
+    label: "京东"
+  },
+  taobao: {
+    path: "/taobao/item_search/",
+    label: "淘宝"
+  }
 };
 
 const qjlProfileCategoryKeywords = {
@@ -774,6 +796,38 @@ app.post("/api/qjl/profile/refresh", async (_req, res) => {
   }
 });
 
+app.post("/api/qjl/homepage/switch", async (req, res) => {
+  try {
+    const current = getCurrentQjlAccount();
+    if (!current?.uid || !current?.mini_token) {
+      res.status(400).json({ error: "当前还没有登录群接龙，无法切换主页。" });
+      return;
+    }
+
+    const ghCode = String(req.body.ghCode || "").trim();
+    if (!ghCode) {
+      res.status(400).json({ error: "请先选择要切换的群接龙主页。" });
+      return;
+    }
+
+    const account = await rebuildQjlAccountForHomepage({
+      account: current,
+      ghCode
+    });
+
+    persistQjlAccount(account);
+
+    res.json({
+      ok: true,
+      loggedIn: true,
+      account: formatQjlAccount(getQjlAccountByUid(account.uid)),
+      message: `已切换到主页：${account.ghName || ghCode}`
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message || "切换群接龙主页失败" });
+  }
+});
+
 app.delete("/api/qjl/account", (_req, res) => {
   deleteCurrentQjlAccount();
 
@@ -1127,6 +1181,82 @@ app.get("/api/collections/:id/compare", (req, res) => {
   });
 });
 
+app.get("/api/compare/external-search", async (req, res) => {
+  try {
+    const source = String(req.query.source || "1688").trim().toLowerCase();
+    const matchMode = String(req.query.matchMode || "brand_style").trim().toLowerCase();
+    const sourceConfig = externalCompareSources[source];
+    if (!sourceConfig) {
+      res.status(400).json({ error: "暂不支持这个外部平台。" });
+      return;
+    }
+
+    const keyword = String(req.query.keyword || "").trim();
+    if (!keyword) {
+      res.status(400).json({ error: "请输入要搜索的商品关键词。" });
+      return;
+    }
+
+    if (!defaultOneboundApiKey || !defaultOneboundApiSecret) {
+      res.status(400).json({ error: "尚未配置 OneBound 接口凭据，请先设置 ONEBOUND_API_KEY 和 ONEBOUND_API_SECRET。" });
+      return;
+    }
+
+    const page = Math.max(1, Number.parseInt(String(req.query.page || "1"), 10) || 1);
+    const pageSize = Math.min(40, Math.max(1, Number.parseInt(String(req.query.pageSize || "20"), 10) || 20));
+    const startPrice = Math.max(0, Number.parseFloat(String(req.query.startPrice || "0")) || 0);
+    const endPrice = Math.max(0, Number.parseFloat(String(req.query.endPrice || "0")) || 0);
+
+    const params = new URLSearchParams({
+      key: defaultOneboundApiKey,
+      secret: defaultOneboundApiSecret,
+      q: keyword,
+      start_price: String(startPrice),
+      end_price: String(endPrice),
+      page: String(page),
+      page_size: String(pageSize),
+      cat: "0",
+      lang: "zh-CN"
+    });
+
+    const response = await fetch(`${defaultOneboundApiBase}${sourceConfig.path}?${params.toString()}`, {
+      headers: {
+        accept: "application/json, text/plain, */*",
+        referer: "https://open.onebound.cn/"
+      }
+    });
+    const payload = await response.json();
+
+    if (!response.ok) {
+      res.status(response.status).json({
+        error: payload?.error || payload?.msg || payload?.message || "外部平台搜索失败"
+      });
+      return;
+    }
+
+    const normalized = normalizeExternalSearchPayload(payload, sourceConfig.label);
+    const filteredItems = filterExternalItemsByMatchMode({
+      items: normalized.items,
+      keyword,
+      matchMode
+    });
+    res.json({
+      ok: true,
+      source,
+      matchMode,
+      platformLabel: sourceConfig.label,
+      keyword,
+      page,
+      pageSize,
+      total: filteredItems.length,
+      rawTotal: normalized.total,
+      items: filteredItems
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message || "外部平台搜索失败" });
+  }
+});
+
 app.post("/api/public/upload/:token", (_req, res) => {
   res.status(410).json({ error: "旧的上传链接模式已停用，请在软件首页创建批次时直接上传多个货盘文件。" });
 });
@@ -1470,6 +1600,8 @@ function formatQjlAccount(row) {
 
   const profile = safeParseJson(row.profile_json) || {};
   const feedSummary = safeParseJson(row.feed_summary_json) || {};
+  const homepageList = normalizeQjlHomes(safeParseJson(row.homepage_list_json) || {});
+  const currentHomepage = homepageList.find((item) => String(item?.ghCode || "") === String(row.gh_id || "")) || null;
 
   return {
     uid: String(row.uid || ""),
@@ -1482,8 +1614,21 @@ function formatQjlAccount(row) {
     lastLoginAt: row.last_login_at || "",
     profileUpdatedAt: row.profile_updated_at || "",
     profileSummary: String(row.profile_summary || ""),
+    homepageList: homepageList.map(formatQjlHomepageOption),
+    currentHomepage: currentHomepage ? formatQjlHomepageOption(currentHomepage) : null,
     profile,
     feedSummary
+  };
+}
+
+function formatQjlHomepageOption(home) {
+  return {
+    ghCode: String(home?.ghCode || "").trim(),
+    ghName: String(home?.ghName || "").trim(),
+    fansNum: toSafeInt(home?.fansNum),
+    orderNum: toSafeInt(home?.ghOrderNum),
+    ghType: toSafeInt(home?.ghType),
+    useStatus: toSafeInt(home?.useStatus)
   };
 }
 
@@ -1895,6 +2040,18 @@ function normalizeQjlHomes(data) {
   const merged = [];
   const seen = new Set();
 
+  if (Array.isArray(data)) {
+    for (const home of data) {
+      const ghCode = String(home?.ghCode || "").trim();
+      if (!ghCode || seen.has(ghCode)) {
+        continue;
+      }
+      seen.add(ghCode);
+      merged.push(home);
+    }
+    return merged;
+  }
+
   for (const key of ["allHomeList", "normalHomeList", "expireHomeList"]) {
     const homes = data?.[key];
     if (!Array.isArray(homes)) {
@@ -1913,6 +2070,42 @@ function normalizeQjlHomes(data) {
   }
 
   return merged;
+}
+
+function loadLocalEnvFiles(filePaths) {
+  for (const filePath of filePaths) {
+    if (!filePath || !fs.existsSync(filePath)) {
+      continue;
+    }
+
+    const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) {
+        continue;
+      }
+
+      const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+      if (!match) {
+        continue;
+      }
+
+      const [, key, rawValue] = match;
+      if (process.env[key]) {
+        continue;
+      }
+
+      let value = rawValue.trim();
+      if (
+        (value.startsWith("\"") && value.endsWith("\"")) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+
+      process.env[key] = value;
+    }
+  }
 }
 
 function toSafeInt(value) {
@@ -2368,6 +2561,91 @@ async function buildQjlAccountFromLogin({ uid, miniToken }) {
     lastLoginAt: now,
     profileUpdatedAt: now,
     createdAt: now,
+    updatedAt: now
+  };
+}
+
+async function rebuildQjlAccountForHomepage({ account, ghCode }) {
+  const uid = String(account?.uid || "").trim();
+  const miniToken = String(account?.mini_token || "").trim();
+  if (!uid || !miniToken) {
+    throw new Error("当前群接龙登录状态无效，请重新登录。");
+  }
+
+  let homes = normalizeQjlHomes(safeParseJson(account.homepage_list_json) || {});
+  if (!homes.length) {
+    homes = await fetchQjlHomepageList({ token: miniToken, uid });
+  }
+
+  const selectedHome = homes.find((home) => String(home?.ghCode || "").trim() === ghCode);
+  if (!selectedHome) {
+    throw new Error("未找到对应的群接龙主页，请先刷新主页列表。");
+  }
+
+  const now = new Date().toISOString();
+  const safeGhCode = String(selectedHome.ghCode || "").trim();
+  const ghName = String(selectedHome.ghName || "").trim();
+
+  let feedSummary = {
+    activityCount: 0,
+    recentCount: 0,
+    totalOrders: 0,
+    totalViews: 0,
+    topCategories: [],
+    topLeaders: [],
+    bestSelling: [],
+    mostViewed: [],
+    sampleActivities: []
+  };
+  let overview = {};
+
+  try {
+    const activities = await fetchQjlFeed({ token: miniToken, uid, ghId: safeGhCode, pageSize: 100 });
+    feedSummary = summarizeQjlFeedActivities(activities);
+  } catch (_error) {
+    feedSummary = { ...feedSummary };
+  }
+
+  try {
+    overview = await fetchQjlBusinessOverview({ token: miniToken, uid, ghId: safeGhCode });
+  } catch (_error) {
+    overview = {};
+  }
+
+  const profile = await buildQjlPortrait({
+    uid,
+    ghId: safeGhCode,
+    ghName: ghName || `群接龙用户 ${uid}`,
+    home: selectedHome,
+    feedSummary,
+    overview
+  });
+
+  return {
+    uid,
+    nickname: ghName || String(account.nickname || "") || `群接龙用户 ${uid}`,
+    ghId: safeGhCode,
+    ghName: ghName || `群接龙用户 ${uid}`,
+    fansNum: toSafeInt(selectedHome?.fansNum),
+    orderNum: toSafeInt(selectedHome?.ghOrderNum),
+    miniToken,
+    tokenHint: String(account.token_hint || "") || maskSecret(miniToken),
+    userInfoJson: JSON.stringify({
+      uid,
+      ghId: safeGhCode,
+      ghName: ghName || "",
+      loginSource: "qjlMiniSkills-compatible"
+    }),
+    homepageListJson: JSON.stringify(homes),
+    feedSummaryJson: JSON.stringify({
+      ...feedSummary,
+      overview
+    }),
+    profileJson: JSON.stringify(profile),
+    profileSummary: profile.summary || "",
+    lastLoginAt: account.last_login_at || now,
+    profileUpdatedAt: now,
+    createdAt: account.created_at || now,
     updatedAt: now
   };
 }
@@ -3397,7 +3675,8 @@ async function chatAboutUploadsWithAi({ collection, message, history, context })
     "请基于给定的货盘上下文回答，重点关注价格结构、品类覆盖、供应商差异、风险点、缺失信息和下一步建议。",
     "如果上下文里包含登录用户的群接龙画像，请结合该用户的品类偏好、经营阶段和选品关注点来给出更贴近业务的建议。",
     "不要假装看过上下文之外的数据；如果信息不足，要明确说出缺口。",
-    "回答使用中文，尽量结构化、简洁、可执行。"
+    "回答使用中文，尽量结构化、简洁、可执行。",
+    "适合时请使用 Markdown 小标题、项目符号和表格来组织结果，尤其是涉及多供应商价格、优缺点对比、风险清单时。"
   ].join(" ");
 
   const userProfile = getCurrentQjlProfileContext();
@@ -3830,6 +4109,191 @@ function renderMissingLinkPage() {
       </body>
     </html>
   `;
+}
+
+function normalizeExternalSearchPayload(payload, platformLabel) {
+  const data = payload?.result || payload?.data || payload?.items || payload?.item || payload || {};
+  const items = firstArray(
+    data.items?.item,
+    data.items,
+    data.items,
+    data.item,
+    data.list,
+    data.auctions,
+    data.products,
+    payload?.items?.item,
+    payload?.items
+  );
+  const total =
+    Number(
+      data.total_results ||
+        data.real_total_results ||
+        data.total ||
+        data.search_count ||
+        payload?.items?.total_results ||
+        payload?.items?.real_total_results ||
+        payload?.total ||
+        items.length
+    ) || items.length;
+
+  return {
+    total,
+    items: items.map((item) => normalizeExternalSearchItem(item, platformLabel)).filter(Boolean)
+  };
+}
+
+function normalizeExternalSearchItem(item, platformLabel) {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+
+  const title = firstString(item.title, item.name, item.item_title, item.raw_title, item.subject);
+  const price = firstString(
+    item.price,
+    item.promotion_price,
+    item.zk_final_price,
+    item.orginal_price,
+    item.original_price,
+    item.sale_price
+  );
+  const detailUrl = firstString(item.detail_url, item.url, item.item_url, item.click_url);
+  const shopName = firstString(item.shop_name, item.seller_name, item.nick, item.store_name);
+  const itemId = firstString(item.num_iid, item.itemid, item.item_id, item.sku_id, item.id);
+  const location = firstString(item.provcity, item.location, item.area, item.city);
+  const sales = firstString(item.sales, item.sale_num, item.sold, item.volume);
+  const imageUrl = normalizeExternalImageUrl(
+    firstString(
+      item.pic_url,
+      item.pict_url,
+      item.picUrl,
+      item.image_url,
+      item.imageUrl,
+      item.main_pic,
+      item.mainPic,
+      item.img,
+      item.image,
+      item.thumbnail_url,
+      item.thumbnailUrl,
+      item.thumbnail,
+      item.small_images?.string?.[0],
+      item.small_images?.[0],
+      item.pics?.[0]
+    )
+  );
+
+  return {
+    title: title || "未命名商品",
+    priceText: price ? `¥${price}` : "-",
+    salesText: sales ? `销量 ${sales}` : "外部价格",
+    detailUrl,
+    imageUrl,
+    shopName: shopName || "未知店铺",
+    itemId: itemId || "",
+    location: location || "",
+    platformLabel
+  };
+}
+
+function normalizeExternalImageUrl(value) {
+  const imageUrl = String(value || "").trim();
+  if (!imageUrl) {
+    return "";
+  }
+
+  if (imageUrl.startsWith("//")) {
+    return `https:${imageUrl}`;
+  }
+
+  return imageUrl;
+}
+
+function filterExternalItemsByMatchMode({ items, keyword, matchMode }) {
+  if (matchMode !== "brand_style") {
+    return items;
+  }
+
+  const signature = buildExternalKeywordSignature(keyword);
+  if (!signature.brandTokens.length && !signature.styleTokens.length) {
+    return items;
+  }
+
+  return items.filter((item) => matchesBrandAndStyle(item?.title || "", signature));
+}
+
+function buildExternalKeywordSignature(keyword) {
+  const normalized = String(keyword || "").trim().toUpperCase();
+  const styleTokens = uniqueStrings(normalized.match(/[A-Z]+[A-Z0-9-]*\d+[A-Z0-9-]*/g) || []);
+
+  let brandSource = normalized;
+  for (const token of styleTokens) {
+    brandSource = brandSource.replaceAll(token, " ");
+  }
+
+  const stopWords = [
+    "手持小风扇",
+    "小风扇",
+    "风扇",
+    "口红款",
+    "口红",
+    "手持",
+    "便携",
+    "迷你",
+    "折叠",
+    "款",
+    "新款",
+    "新品",
+    "充电",
+    "高速",
+    "静音",
+    "制冷",
+    "喷雾",
+    "数显",
+    "桌面",
+    "涡轮",
+    "无级变速",
+    "USB"
+  ];
+  for (const word of stopWords) {
+    brandSource = brandSource.replaceAll(word, " ");
+  }
+
+  const brandTokens = uniqueStrings((brandSource.match(/[\u4E00-\u9FFF]{2,8}|[A-Z]{2,}/g) || []).filter((token) => token !== "USB"));
+
+  return {
+    brandTokens,
+    styleTokens
+  };
+}
+
+function matchesBrandAndStyle(title, signature) {
+  const normalizedTitle = String(title || "").trim().toUpperCase();
+  const brandOk =
+    !signature.brandTokens.length ||
+    signature.brandTokens.some((token) => normalizedTitle.includes(token));
+  const styleOk =
+    !signature.styleTokens.length ||
+    signature.styleTokens.some((token) => normalizedTitle.includes(token));
+
+  return brandOk && styleOk;
+}
+
+function firstArray(...candidates) {
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) {
+      return candidate;
+    }
+  }
+  return [];
+}
+
+function firstString(...candidates) {
+  for (const candidate of candidates) {
+    const value = String(candidate ?? "").trim();
+    if (value) {
+      return value;
+    }
+  }
+  return "";
 }
 
 function escapeHtml(value) {

@@ -6,6 +6,7 @@ const state = {
   chatMessages: []
 };
 
+const workspaceStage = document.querySelector(".workspace-stage");
 const createForm = document.getElementById("create-form");
 const workspaceLayout = document.querySelector(".workspace-layout");
 const workspaceResizer = document.getElementById("workspace-resizer");
@@ -20,6 +21,7 @@ const qjlLoginLink = document.getElementById("qjl-login-link");
 const qjlProfilePreview = document.getElementById("qjl-profile-preview");
 const qjlProfileName = document.getElementById("qjl-profile-name");
 const qjlProfileMeta = document.getElementById("qjl-profile-meta");
+const qjlHomepageMenu = document.getElementById("qjl-homepage-menu");
 const qjlProfileSummary = document.getElementById("qjl-profile-summary");
 const qjlProfileTags = document.getElementById("qjl-profile-tags");
 const qjlLoginStartButton = document.getElementById("qjl-login-start");
@@ -44,8 +46,14 @@ const refreshUploads = document.getElementById("refresh-uploads");
 const toggleAllUploads = document.getElementById("toggle-all-uploads");
 const selectedUploadCount = document.getElementById("selected-upload-count");
 const sendSelectedToAiButton = document.getElementById("send-selected-to-ai");
+const compareBody = document.getElementById("compare-body");
 const compareForm = document.getElementById("compare-form");
 const compareResult = document.getElementById("compare-result");
+const toggleCompareFullscreenButton = document.getElementById("toggle-compare-fullscreen");
+const compareFullscreenModal = document.getElementById("compare-fullscreen-modal");
+const compareFullscreenCard = document.getElementById("compare-fullscreen-card");
+const compareFullscreenTarget = document.getElementById("compare-fullscreen-target");
+const closeCompareFullscreenButton = document.getElementById("close-compare-fullscreen");
 const clearChatButton = document.getElementById("clear-chat");
 const chatSelectionStatus = document.getElementById("chat-selection-status");
 const chatMessages = document.getElementById("chat-messages");
@@ -73,11 +81,17 @@ const qjlState = {
   pendingLogin: false,
   loginUrl: "",
   account: null,
-  loaded: false
+  loaded: false,
+  homepageSwitcherOpen: false
 };
 
 const resizeState = {
   dragging: false
+};
+
+const compareFullscreenState = {
+  open: false,
+  placeholder: null
 };
 
 init();
@@ -85,6 +99,8 @@ init();
 async function init() {
   initWorkspaceResizer();
   initUploadEntry();
+  initCompareFullscreen();
+  initPanelCollapse();
   await loadAiStatus();
   await loadQjlAccount();
   await loadCollections();
@@ -107,32 +123,189 @@ async function init() {
   renderChatPanel();
 }
 
+function initPanelCollapse() {
+  const collapseButtons = document.querySelectorAll('.panel-collapse-button');
+
+  collapseButtons.forEach(button => {
+    button.addEventListener('click', function() {
+      const panel = this.closest('.panel');
+      const panelContent = panel.querySelector('.panel-content, .chat-workspace, #empty-state');
+
+      if (panelContent) {
+        const isCollapsed = panel.classList.contains('collapsed');
+
+        if (isCollapsed) {
+          // 展开面板
+          panel.classList.remove('collapsed');
+          panelContent.style.display = 'flex';
+          this.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M6 9l6 6 6-6z"/></svg>';
+        } else {
+          // 折叠面板
+          panel.classList.add('collapsed');
+          panelContent.style.display = 'none';
+          this.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 5v14"/></svg>';
+        }
+      }
+    });
+  });
+}
+
+function syncBodyModalState() {
+  document.body.classList.toggle("modal-open", Boolean(document.querySelector(".modal-shell.is-open")));
+}
+
 function initUploadEntry() {
   if (!toggleUploadEntryButton || !uploadEntryPanel) {
     return;
   }
 
-  const syncUploadEntryButton = () => {
-    toggleUploadEntryButton.setAttribute("aria-expanded", uploadEntryPanel.hidden ? "false" : "true");
+  const setUploadEntryOpen = (open) => {
+    uploadEntryPanel.hidden = !open;
+    uploadEntryPanel.setAttribute("aria-hidden", open ? "false" : "true");
+    uploadEntryPanel.classList.toggle("is-open", open);
+    toggleUploadEntryButton.setAttribute("aria-expanded", open ? "true" : "false");
+    syncBodyModalState();
   };
 
   toggleUploadEntryButton.addEventListener("click", () => {
-    uploadEntryPanel.hidden = !uploadEntryPanel.hidden;
-    syncUploadEntryButton();
+    const nextOpen = uploadEntryPanel.hidden;
+    setUploadEntryOpen(nextOpen);
 
-    if (!uploadEntryPanel.hidden) {
+    if (nextOpen) {
       const firstInput = createForm?.querySelector("input, textarea");
       firstInput?.focus();
-      uploadEntryPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
   });
 
-  closeUploadEntryButton?.addEventListener("click", () => {
-    uploadEntryPanel.hidden = true;
-    syncUploadEntryButton();
+  closeUploadEntryButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setUploadEntryOpen(false);
   });
 
-  syncUploadEntryButton();
+  uploadEntryPanel.addEventListener("click", (event) => {
+    const target = event.target;
+    if (target instanceof HTMLElement && target.dataset.closeUploadEntry === "true") {
+      setUploadEntryOpen(false);
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !uploadEntryPanel.hidden) {
+      setUploadEntryOpen(false);
+    }
+
+    if (event.key === "Escape" && qjlState.homepageSwitcherOpen) {
+      qjlState.homepageSwitcherOpen = false;
+      renderQjlAuthState();
+    }
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!qjlState.homepageSwitcherOpen || !qjlHomepageMenu || !qjlLoginStartButton) {
+      return;
+    }
+
+    const target = event.target;
+    if (!(target instanceof Node)) {
+      return;
+    }
+
+    if (qjlHomepageMenu.contains(target) || qjlLoginStartButton.contains(target)) {
+      return;
+    }
+
+    qjlState.homepageSwitcherOpen = false;
+    renderQjlAuthState();
+  });
+
+  setUploadEntryOpen(false);
+}
+
+function initCompareFullscreen() {
+  if (
+    !toggleCompareFullscreenButton ||
+    !compareBody ||
+    !compareFullscreenModal ||
+    !compareFullscreenCard ||
+    !compareFullscreenTarget
+  ) {
+    return;
+  }
+
+  const setCompareFullscreenOpen = (open) => {
+    compareFullscreenState.open = open;
+    compareFullscreenModal.hidden = !open;
+    compareFullscreenModal.setAttribute("aria-hidden", open ? "false" : "true");
+    compareFullscreenModal.classList.toggle("is-open", open);
+    toggleCompareFullscreenButton.setAttribute("aria-expanded", open ? "true" : "false");
+
+    if (open) {
+      if (!compareFullscreenState.placeholder) {
+        compareFullscreenState.placeholder = document.createComment("compare-body-placeholder");
+      }
+
+      if (compareBody.parentNode !== compareFullscreenTarget) {
+        compareBody.replaceWith(compareFullscreenState.placeholder);
+        compareFullscreenTarget.appendChild(compareBody);
+      }
+
+      syncCompareFullscreenWidth();
+      closeCompareFullscreenButton?.focus();
+    } else {
+      if (compareFullscreenState.placeholder?.parentNode) {
+        compareFullscreenState.placeholder.replaceWith(compareBody);
+      }
+      compareFullscreenCard.style.removeProperty("width");
+    }
+
+    syncBodyModalState();
+  };
+
+  toggleCompareFullscreenButton.addEventListener("click", () => {
+    setCompareFullscreenOpen(!compareFullscreenState.open);
+  });
+
+  closeCompareFullscreenButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    setCompareFullscreenOpen(false);
+  });
+
+  compareFullscreenModal.addEventListener("click", (event) => {
+    const target = event.target;
+    if (target instanceof HTMLElement && target.dataset.closeCompareFullscreen === "true") {
+      setCompareFullscreenOpen(false);
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && compareFullscreenState.open) {
+      setCompareFullscreenOpen(false);
+    }
+  });
+
+  window.addEventListener("resize", () => {
+    if (compareFullscreenState.open) {
+      syncCompareFullscreenWidth();
+    }
+  });
+
+  setCompareFullscreenOpen(false);
+}
+
+function syncCompareFullscreenWidth() {
+  if (!compareFullscreenCard) {
+    return;
+  }
+
+  const reference = workspaceStage || compareBody?.closest(".workspace-stage") || document.body;
+  const width = reference.getBoundingClientRect().width;
+  if (!Number.isFinite(width) || width <= 0) {
+    return;
+  }
+
+  const maxWidth = window.innerWidth - 40;
+  compareFullscreenCard.style.width = `${Math.round(Math.min(width, maxWidth))}px`;
 }
 
 function initWorkspaceResizer() {
@@ -252,7 +425,10 @@ createForm.addEventListener("submit", async (event) => {
     createForm.reset();
     if (uploadEntryPanel) {
       uploadEntryPanel.hidden = true;
+      uploadEntryPanel.setAttribute("aria-hidden", "true");
+      uploadEntryPanel.classList.remove("is-open");
     }
+    syncBodyModalState();
     toggleUploadEntryButton?.setAttribute("aria-expanded", "false");
 
     await loadCollections();
@@ -333,6 +509,12 @@ clearLlmConfigButton.addEventListener("click", async () => {
 });
 
 qjlLoginStartButton?.addEventListener("click", async () => {
+  if (qjlState.loggedIn) {
+    qjlState.homepageSwitcherOpen = !qjlState.homepageSwitcherOpen;
+    renderQjlAuthState();
+    return;
+  }
+
   const idleText = qjlLoginStartButton.textContent;
   qjlLoginStartButton.disabled = true;
   qjlLoginStartButton.textContent = "准备中...";
@@ -474,11 +656,14 @@ if (sendSelectedToAiButton) {
 
 compareForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (!state.activeCollection) {
+  const formData = new FormData(compareForm);
+  const source = String(formData.get("source") || "local");
+
+  if (source === "local" && !state.activeCollection) {
     return;
   }
 
-  await renderComparison(state.activeCollection.id, new FormData(compareForm));
+  await renderComparison(state.activeCollection?.id || "", formData);
 });
 
 if (productForm) {
@@ -513,6 +698,15 @@ chatForm.addEventListener("submit", async (event) => {
     pendingText: "分析中...",
     idleText: "发送"
   });
+});
+
+chatInput?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" || event.shiftKey || event.isComposing) {
+    return;
+  }
+
+  event.preventDefault();
+  chatForm.requestSubmit();
 });
 
 function buildSelectedUploadsDraft(selectedUploads, existingMessage = "") {
@@ -692,6 +886,9 @@ function applyQjlAccount(data) {
   qjlState.loginUrl = data?.loginUrl || "";
   qjlState.account = data?.account || null;
   qjlState.loaded = true;
+  if (!qjlState.loggedIn) {
+    qjlState.homepageSwitcherOpen = false;
+  }
 }
 
 function renderQjlAuthState(message) {
@@ -715,7 +912,11 @@ function renderQjlAuthState(message) {
       ? `${qjlState.account?.ghName || qjlState.account?.uid || "已登录"}`
       : qjlState.pendingLogin
         ? "待确认"
-        : "未登录";
+      : "未登录";
+  }
+
+  if (qjlLoginStartButton) {
+    qjlLoginStartButton.textContent = qjlState.loggedIn ? "切换主页" : "开始登录";
   }
 
   if (qjlLoginLink) {
@@ -750,12 +951,92 @@ function renderQjlAuthState(message) {
     }
   }
 
+  renderQjlHomepageMenu(qjlState.account);
+
   if (qjlRefreshProfileButton) {
     qjlRefreshProfileButton.disabled = !qjlState.loggedIn;
   }
 
   if (qjlLogoutButton) {
     qjlLogoutButton.disabled = !qjlState.loggedIn;
+  }
+}
+
+function renderQjlHomepageMenu(account) {
+  if (!qjlHomepageMenu) {
+    return;
+  }
+
+  if (!qjlState.loggedIn || !qjlState.homepageSwitcherOpen) {
+    qjlHomepageMenu.hidden = true;
+    return;
+  }
+
+  const homes = Array.isArray(account?.homepageList) ? account.homepageList : [];
+  qjlHomepageMenu.hidden = false;
+
+  if (!homes.length) {
+    qjlHomepageMenu.innerHTML = `<div class="homepage-menu-empty">当前没有可切换的主页。</div>`;
+    return;
+  }
+
+  qjlHomepageMenu.innerHTML = homes
+    .map((home) => {
+      const isCurrent = home.ghCode === account.ghId;
+      const stats = [home.fansNum ? `粉丝 ${home.fansNum}` : "", home.orderNum ? `订单 ${home.orderNum}` : ""]
+        .filter(Boolean)
+        .join(" · ");
+      return `
+        <button
+          type="button"
+          class="homepage-menu-item ${isCurrent ? "active-homepage" : ""}"
+          data-gh-code="${escapeHtml(home.ghCode)}"
+          ${isCurrent ? "disabled" : ""}
+        >
+          <strong>${escapeHtml(home.ghName || home.ghCode)}${isCurrent ? "（当前）" : ""}</strong>
+          <span>${escapeHtml(stats || home.ghCode)}</span>
+        </button>
+      `;
+    })
+    .join("");
+
+  for (const button of qjlHomepageMenu.querySelectorAll("[data-gh-code]")) {
+    button.addEventListener("click", async () => {
+      const ghCode = String(button.dataset.ghCode || "").trim();
+      if (!ghCode || ghCode === String(qjlState.account?.ghId || "")) {
+        return;
+      }
+
+      const originalHtml = button.innerHTML;
+      button.disabled = true;
+      button.innerHTML = `<strong>切换中...</strong><span>正在更新该主页画像</span>`;
+
+      try {
+        const response = await fetch("/api/qjl/homepage/switch", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ ghCode })
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || "切换群接龙主页失败");
+        }
+
+        applyQjlAccount(data);
+        qjlState.homepageSwitcherOpen = false;
+        renderQjlAuthState(data.message || "已切换群接龙主页。");
+        if (state.activeCollection) {
+          updateActiveCollectionCopy();
+        }
+      } catch (error) {
+        button.disabled = false;
+        button.innerHTML = originalHtml;
+        renderQjlAuthState(error.message || "切换群接龙主页失败");
+      }
+    });
   }
 }
 
@@ -874,69 +1155,163 @@ async function renderUploads() {
 async function renderComparison(collectionId, formData) {
   const keyword = String(formData.get("keyword") || "");
   const groupBy = String(formData.get("groupBy") || "smart");
+  const source = String(formData.get("source") || "local");
+  const matchMode = String(formData.get("matchMode") || "brand_style");
   compareResult.innerHTML = `<div class="loading">正在计算比价结果...</div>`;
 
-  const params = new URLSearchParams({ keyword, groupBy });
-  const response = await fetch(`/api/collections/${collectionId}/compare?${params.toString()}`);
-  const data = await response.json();
-  const items = data.items || [];
+  try {
+    if (source !== "local") {
+      if (!keyword.trim()) {
+        compareResult.innerHTML = `
+          <div class="empty-card slim">
+            <h3>请输入搜索关键词</h3>
+            <p>外部平台比价需要先输入商品关键词，例如“香蕉”“女装外套”或具体 SKU。</p>
+          </div>
+        `;
+        return;
+      }
 
-  if (!items.length) {
+      const params = new URLSearchParams({
+        keyword,
+        source,
+        matchMode
+      });
+      const response = await fetch(`/api/compare/external-search?${params.toString()}`);
+      const data = await response.json();
+
+      if (!response.ok) {
+        compareResult.innerHTML = `
+          <div class="empty-card slim">
+            <h3>外部比价查询失败</h3>
+            <p>${escapeHtml(data.error || "请稍后重试")}</p>
+          </div>
+        `;
+        return;
+      }
+
+      const items = Array.isArray(data.items) ? data.items : [];
+      if (!items.length) {
+        compareResult.innerHTML = `
+          <div class="empty-card slim">
+            <h3>没有找到匹配结果</h3>
+            <p>${matchMode === "brand_style" ? "当前已按相同品牌和款式筛选。你可以切换到“全部结果”，或调整关键词后再试。" : "试试更换关键词，或者切到别的平台继续搜索。"}</p>
+          </div>
+        `;
+        return;
+      }
+
+      compareResult.innerHTML = `
+        <div class="compare-summary">
+          ${escapeHtml(data.platformLabel || source)} ${matchMode === "brand_style" ? "按相同品牌和款式筛选后" : "共"}返回 <strong>${data.total || items.length}</strong> 条候选商品
+        </div>
+        <div class="compare-cards">
+          ${items
+            .map(
+              (item) => `
+                <article class="compare-card external-compare-card">
+                  <div class="compare-card-top">
+                    <div class="external-compare-main">
+                      <div class="external-compare-thumb">
+                        ${
+                          item.imageUrl
+                            ? `<img src="${escapeHtml(item.imageUrl)}" alt="${escapeHtml(item.title || "商品图")}" loading="lazy" referrerpolicy="no-referrer" />`
+                            : `<div class="external-compare-thumb-fallback">暂无图片</div>`
+                        }
+                      </div>
+                      <div class="external-compare-copy">
+                        <h4>${escapeHtml(item.title || "未命名商品")}</h4>
+                        <p>${escapeHtml(item.shopName || "未知店铺")} · ${escapeHtml(item.platformLabel || data.platformLabel || source)}</p>
+                      </div>
+                    </div>
+                    <div class="price-badge">
+                      <strong>${escapeHtml(item.priceText || "-")}</strong>
+                      <span>${escapeHtml(item.salesText || "外部价格")}</span>
+                    </div>
+                  </div>
+                  <div class="compare-meta">
+                    <span>${escapeHtml(item.itemId || "无商品 ID")}</span>
+                    <span>${escapeHtml(item.location || "地区未知")}</span>
+                    <span>${escapeHtml(item.detailUrl ? "可跳转详情" : "无详情链接")}</span>
+                  </div>
+                  ${item.detailUrl ? `<a class="table-link external-link" href="${escapeHtml(item.detailUrl)}" target="_blank" rel="noreferrer">打开商品详情</a>` : ""}
+                </article>
+              `
+            )
+            .join("")}
+        </div>
+      `;
+      return;
+    }
+
+    const params = new URLSearchParams({ keyword, groupBy });
+    const response = await fetch(`/api/collections/${collectionId}/compare?${params.toString()}`);
+    const data = await response.json();
+    const items = data.items || [];
+
+    if (!items.length) {
+      compareResult.innerHTML = `
+        <div class="empty-card slim">
+          <h3>没有找到可比价的数据</h3>
+          <p>试试换个关键词，或者先等供应商上传带价格的货盘。</p>
+        </div>
+      `;
+      return;
+    }
+
     compareResult.innerHTML = `
-      <div class="empty-card slim">
-        <h3>没有找到可比价的数据</h3>
-        <p>试试换个关键词，或者先等供应商上传带价格的货盘。</p>
+      <div class="compare-summary">
+        共找到 <strong>${data.totalGroups}</strong> 个可比价商品分组
+      </div>
+      <div class="compare-cards">
+        ${items
+          .map(
+            (item) => `
+              <article class="compare-card">
+                <div class="compare-card-top">
+                  <div>
+                    <h4>${escapeHtml(item.productName)}</h4>
+                    <p>${escapeHtml(item.sku || "无 SKU")} · ${escapeHtml(item.spec || "未填写规格")}</p>
+                  </div>
+                  <div class="price-badge">
+                    <strong>${formatMoney(item.minPrice)}</strong>
+                    <span>最低价</span>
+                  </div>
+                </div>
+
+                <div class="compare-meta">
+                  <span>${item.offerCount} 家供应商</span>
+                  <span>价差 ${formatMoney(item.priceSpread)}</span>
+                  <span>${escapeHtml(item.unit || "单位未填")}</span>
+                </div>
+
+                <div class="offer-list">
+                  ${item.offers
+                    .map(
+                      (offer, index) => `
+                        <div class="offer-row ${index === 0 ? "best" : ""}">
+                          <strong>${escapeHtml(offer.supplierName)}</strong>
+                          <span>${formatMoney(offer.price)}</span>
+                          <span>起订 ${offer.moq ?? "-"}</span>
+                          <span>库存 ${offer.stock ?? "-"}</span>
+                        </div>
+                      `
+                    )
+                    .join("")}
+                </div>
+              </article>
+            `
+          )
+          .join("")}
       </div>
     `;
-    return;
+  } catch (error) {
+    compareResult.innerHTML = `
+      <div class="empty-card slim">
+        <h3>比价请求失败</h3>
+        <p>${escapeHtml(error.message || "请求未完成，请稍后重试。")}</p>
+      </div>
+    `;
   }
-
-  compareResult.innerHTML = `
-    <div class="compare-summary">
-      共找到 <strong>${data.totalGroups}</strong> 个可比价商品分组
-    </div>
-    <div class="compare-cards">
-      ${items
-        .map(
-          (item) => `
-            <article class="compare-card">
-              <div class="compare-card-top">
-                <div>
-                  <h4>${escapeHtml(item.productName)}</h4>
-                  <p>${escapeHtml(item.sku || "无 SKU")} · ${escapeHtml(item.spec || "未填写规格")}</p>
-                </div>
-                <div class="price-badge">
-                  <strong>${formatMoney(item.minPrice)}</strong>
-                  <span>最低价</span>
-                </div>
-              </div>
-
-              <div class="compare-meta">
-                <span>${item.offerCount} 家供应商</span>
-                <span>价差 ${formatMoney(item.priceSpread)}</span>
-                <span>${escapeHtml(item.unit || "单位未填")}</span>
-              </div>
-
-              <div class="offer-list">
-                ${item.offers
-                  .map(
-                    (offer, index) => `
-                      <div class="offer-row ${index === 0 ? "best" : ""}">
-                        <strong>${escapeHtml(offer.supplierName)}</strong>
-                        <span>${formatMoney(offer.price)}</span>
-                        <span>起订 ${offer.moq ?? "-"}</span>
-                        <span>库存 ${offer.stock ?? "-"}</span>
-                      </div>
-                    `
-                  )
-                  .join("")}
-              </div>
-            </article>
-          `
-        )
-        .join("")}
-    </div>
-  `;
 }
 
 function bindUploadSelectionEvents(items) {
@@ -1066,6 +1441,169 @@ function getChatMessages() {
   return state.chatMessages || [];
 }
 
+function renderMarkdownMessage(content) {
+  const source = String(content || "").replace(/\r\n/g, "\n");
+  const lines = source.split("\n");
+  const blocks = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index];
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      index += 1;
+      continue;
+    }
+
+    if (trimmed.startsWith("```")) {
+      const codeLines = [];
+      index += 1;
+      while (index < lines.length && !lines[index].trim().startsWith("```")) {
+        codeLines.push(lines[index]);
+        index += 1;
+      }
+      if (index < lines.length) {
+        index += 1;
+      }
+      blocks.push(`<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+      continue;
+    }
+
+    if (isMarkdownTable(lines, index)) {
+      const tableLines = [lines[index], lines[index + 1]];
+      index += 2;
+      while (index < lines.length && lines[index].includes("|") && lines[index].trim()) {
+        tableLines.push(lines[index]);
+        index += 1;
+      }
+      blocks.push(renderMarkdownTable(tableLines));
+      continue;
+    }
+
+    if (/^#{1,3}\s+/.test(trimmed)) {
+      const level = Math.min(3, trimmed.match(/^#+/)[0].length);
+      const text = trimmed.replace(/^#{1,3}\s+/, "");
+      blocks.push(`<h${level}>${renderInlineMarkdown(text)}</h${level}>`);
+      index += 1;
+      continue;
+    }
+
+    if (/^>\s?/.test(trimmed)) {
+      const quoteLines = [];
+      while (index < lines.length && /^>\s?/.test(lines[index].trim())) {
+        quoteLines.push(lines[index].trim().replace(/^>\s?/, ""));
+        index += 1;
+      }
+      blocks.push(`<blockquote>${quoteLines.map((item) => renderInlineMarkdown(item)).join("<br />")}</blockquote>`);
+      continue;
+    }
+
+    if (/^(-|\*)\s+/.test(trimmed)) {
+      const items = [];
+      while (index < lines.length && /^(-|\*)\s+/.test(lines[index].trim())) {
+        items.push(lines[index].trim().replace(/^(-|\*)\s+/, ""));
+        index += 1;
+      }
+      blocks.push(`<ul>${items.map((item) => `<li>${renderInlineMarkdown(item)}</li>`).join("")}</ul>`);
+      continue;
+    }
+
+    if (/^\d+\.\s+/.test(trimmed)) {
+      const items = [];
+      while (index < lines.length && /^\d+\.\s+/.test(lines[index].trim())) {
+        items.push(lines[index].trim().replace(/^\d+\.\s+/, ""));
+        index += 1;
+      }
+      blocks.push(`<ol>${items.map((item) => `<li>${renderInlineMarkdown(item)}</li>`).join("")}</ol>`);
+      continue;
+    }
+
+    if (/^---+$/.test(trimmed) || /^\*\*\*+$/.test(trimmed)) {
+      blocks.push("<hr />");
+      index += 1;
+      continue;
+    }
+
+    const paragraphLines = [];
+    while (index < lines.length) {
+      const candidate = lines[index];
+      const candidateTrimmed = candidate.trim();
+      if (
+        !candidateTrimmed ||
+        candidateTrimmed.startsWith("```") ||
+        /^#{1,3}\s+/.test(candidateTrimmed) ||
+        /^>\s?/.test(candidateTrimmed) ||
+        /^(-|\*)\s+/.test(candidateTrimmed) ||
+        /^\d+\.\s+/.test(candidateTrimmed) ||
+        /^---+$/.test(candidateTrimmed) ||
+        /^\*\*\*+$/.test(candidateTrimmed) ||
+        isMarkdownTable(lines, index)
+      ) {
+        break;
+      }
+      paragraphLines.push(candidateTrimmed);
+      index += 1;
+    }
+    blocks.push(`<p>${paragraphLines.map((item) => renderInlineMarkdown(item)).join("<br />")}</p>`);
+  }
+
+  return blocks.join("");
+}
+
+function isMarkdownTable(lines, index) {
+  if (index + 1 >= lines.length) {
+    return false;
+  }
+
+  const header = lines[index];
+  const separator = lines[index + 1];
+  if (!header.includes("|") || !separator.includes("|")) {
+    return false;
+  }
+
+  return /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(separator.trim());
+}
+
+function renderMarkdownTable(tableLines) {
+  const rows = tableLines.map(splitMarkdownTableRow).filter((row) => row.length);
+  if (rows.length < 2) {
+    return `<p>${tableLines.map((line) => renderInlineMarkdown(line)).join("<br />")}</p>`;
+  }
+
+  const header = rows[0];
+  const body = rows.slice(2);
+
+  return `
+    <table>
+      <thead>
+        <tr>${header.map((cell) => `<th>${renderInlineMarkdown(cell)}</th>`).join("")}</tr>
+      </thead>
+      <tbody>
+        ${body
+          .map(
+            (row) => `<tr>${row.map((cell) => `<td>${renderInlineMarkdown(cell)}</td>`).join("")}</tr>`
+          )
+          .join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function splitMarkdownTableRow(line) {
+  const trimmed = String(line || "").trim().replace(/^\|/, "").replace(/\|$/, "");
+  return trimmed.split("|").map((cell) => cell.trim());
+}
+
+function renderInlineMarkdown(text) {
+  let html = escapeHtml(text);
+  html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
+  html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  html = html.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+  return html;
+}
+
 function renderChatPanel(statusMessage = "", pending = false) {
   const items = state.uploadBatches || [];
   const selectedIds = new Set(getSelectedUploadIds());
@@ -1098,7 +1636,7 @@ function renderChatPanel(statusMessage = "", pending = false) {
       (message) => `
         <article class="chat-bubble ${message.role === "user" ? "user" : "assistant"}">
           <div class="chat-role">${message.role === "user" ? "你" : "AI 分析"}</div>
-          <div class="chat-content">${escapeHtml(message.content).replace(/\n/g, "<br />")}</div>
+          <div class="chat-content">${message.role === "assistant" ? renderMarkdownMessage(message.content) : escapeHtml(message.content).replace(/\n/g, "<br />")}</div>
         </article>
       `
     )
