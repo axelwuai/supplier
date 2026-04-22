@@ -11,6 +11,7 @@ const createForm = document.getElementById("create-form");
 const workspaceLayout = document.querySelector(".workspace-layout");
 const workspaceResizer = document.getElementById("workspace-resizer");
 const settingsDetails = document.getElementById("settings-details");
+const accountDetails = document.getElementById("account-details");
 const settingsSummaryText = document.getElementById("settings-summary-text");
 const llmConfigForm = document.getElementById("llm-config-form");
 const clearLlmConfigButton = document.getElementById("clear-llm-config");
@@ -18,6 +19,12 @@ const llmConfigStatus = document.getElementById("llm-config-status");
 const qjlAuthSummary = document.getElementById("qjl-auth-summary");
 const qjlAuthStatus = document.getElementById("qjl-auth-status");
 const qjlLoginLink = document.getElementById("qjl-login-link");
+const qjlAvatarImage = document.getElementById("qjl-avatar-image");
+const qjlAvatarFallback = document.getElementById("qjl-avatar-fallback");
+const qjlAvatarImageLarge = document.getElementById("qjl-avatar-image-large");
+const qjlAvatarFallbackLarge = document.getElementById("qjl-avatar-fallback-large");
+const qjlAccountName = document.getElementById("qjl-account-name");
+const qjlAccountMeta = document.getElementById("qjl-account-meta");
 const qjlProfilePreview = document.getElementById("qjl-profile-preview");
 const qjlProfileName = document.getElementById("qjl-profile-name");
 const qjlProfileMeta = document.getElementById("qjl-profile-meta");
@@ -31,13 +38,17 @@ const qjlLogoutButton = document.getElementById("qjl-logout");
 const toggleUploadEntryButton = document.getElementById("toggle-upload-entry");
 const closeUploadEntryButton = document.getElementById("close-upload-entry");
 const uploadEntryPanel = document.getElementById("upload-entry-panel");
+const uploadModeButtons = Array.from(document.querySelectorAll("[data-upload-mode-button]"));
+const uploadModePanels = Array.from(document.querySelectorAll("[data-upload-mode-panel]"));
 const createResult = document.getElementById("create-result");
+const createLinkResult = document.getElementById("create-link-result");
+const uploadLinkCard = document.getElementById("upload-link-card");
+const generatedUploadLinkInput = document.getElementById("generated-upload-link");
+const copyUploadLinkButton = document.getElementById("copy-upload-link");
+const openUploadLinkLink = document.getElementById("open-upload-link");
 const collectionList = document.getElementById("collection-list");
 const emptyState = document.getElementById("empty-state");
 const detailContent = document.getElementById("detail-content");
-const detailName = document.getElementById("detail-name");
-const detailDescription = document.getElementById("detail-description");
-const detailBadge = document.getElementById("detail-badge");
 const detailUploadCount = document.getElementById("detail-upload-count");
 const detailProductCount = document.getElementById("detail-product-count");
 const detailAiStatus = document.getElementById("detail-ai-status");
@@ -51,6 +62,7 @@ const detailFullscreenModal = document.getElementById("detail-fullscreen-modal")
 const detailFullscreenCard = document.getElementById("detail-fullscreen-card");
 const detailFullscreenTarget = document.getElementById("detail-fullscreen-target");
 const closeDetailFullscreenButton = document.getElementById("close-detail-fullscreen");
+const clearDetailFullscreenChatButton = document.getElementById("clear-detail-fullscreen-chat");
 const compareBody = document.getElementById("compare-body");
 const compareForm = document.getElementById("compare-form");
 const compareResult = document.getElementById("compare-result");
@@ -103,6 +115,13 @@ const compareFullscreenState = {
 const detailFullscreenState = {
   open: false,
   placeholder: null
+};
+
+const uploadEntryState = {
+  mode: "direct",
+  generatedUrl: "",
+  generatedInviteId: "",
+  linkPromise: null
 };
 
 init();
@@ -171,6 +190,142 @@ function syncBodyModalState() {
   document.body.classList.toggle("modal-open", Boolean(document.querySelector(".modal-shell.is-open")));
 }
 
+function setUploadEntryMode(mode, { focus = false } = {}) {
+  const nextMode = mode === "link" ? "link" : "direct";
+  uploadEntryState.mode = nextMode;
+
+  for (const button of uploadModeButtons) {
+    const isActive = button.dataset.uploadModeButton === nextMode;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-pressed", isActive ? "true" : "false");
+  }
+
+  for (const panel of uploadModePanels) {
+    const isActive = panel.dataset.uploadModePanel === nextMode;
+    panel.hidden = !isActive;
+  }
+
+  if (focus) {
+    focusUploadEntryTarget();
+  }
+
+  if (nextMode === "link") {
+    void ensureSupplierUploadLink().catch(() => {});
+  }
+}
+
+function focusUploadEntryTarget() {
+  if (uploadEntryState.mode === "link") {
+    if (uploadEntryState.generatedUrl && copyUploadLinkButton && !copyUploadLinkButton.disabled) {
+      copyUploadLinkButton.focus();
+    }
+    return;
+  }
+
+  const activePanel = uploadModePanels.find((panel) => !panel.hidden);
+  const firstField = activePanel?.querySelector("input:not([type='hidden']), textarea, button");
+  firstField?.focus();
+}
+
+function renderSupplierLinkStatus(message = "", tone = "neutral") {
+  if (!createLinkResult) {
+    return;
+  }
+
+  createLinkResult.hidden = !message;
+  createLinkResult.textContent = message;
+  createLinkResult.dataset.tone = message ? tone : "";
+}
+
+function setGeneratedUploadLink(nextUrl = "", nextInviteId = "") {
+  uploadEntryState.generatedUrl = nextUrl;
+  uploadEntryState.generatedInviteId = nextInviteId;
+
+  if (generatedUploadLinkInput) {
+    generatedUploadLinkInput.value = nextUrl;
+  }
+
+  if (uploadLinkCard) {
+    uploadLinkCard.hidden = !nextUrl;
+  }
+
+  if (openUploadLinkLink) {
+    openUploadLinkLink.hidden = !nextUrl;
+    openUploadLinkLink.href = nextUrl || "#";
+  }
+
+  if (copyUploadLinkButton) {
+    copyUploadLinkButton.disabled = !nextUrl;
+  }
+}
+
+async function copyTextToClipboard(text, fallbackInput) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  if (!(fallbackInput instanceof HTMLInputElement)) {
+    throw new Error("当前环境不支持一键复制，请手动复制链接。");
+  }
+
+  fallbackInput.focus();
+  fallbackInput.select();
+  fallbackInput.setSelectionRange(0, fallbackInput.value.length);
+  const copied = document.execCommand("copy");
+  fallbackInput.setSelectionRange(fallbackInput.value.length, fallbackInput.value.length);
+  if (!copied) {
+    throw new Error("复制失败，请手动复制链接。");
+  }
+}
+
+async function ensureSupplierUploadLink() {
+  if (uploadEntryState.generatedUrl) {
+    return uploadEntryState.generatedUrl;
+  }
+
+  if (uploadEntryState.linkPromise) {
+    return uploadEntryState.linkPromise;
+  }
+
+  renderSupplierLinkStatus("正在生成供货商上传链接...", "info");
+  setGeneratedUploadLink("", "");
+
+  const task = (async () => {
+    const response = await fetch("/api/upload-invites", {
+      method: "POST"
+    });
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || "生成链接失败");
+    }
+
+    const uploadUrl = new URL(data.uploadUrl, window.location.origin).toString();
+    setGeneratedUploadLink(uploadUrl, data.id);
+    renderSupplierLinkStatus("");
+
+    if (uploadEntryState.mode === "link") {
+      copyUploadLinkButton?.focus();
+    }
+
+    return uploadUrl;
+  })();
+
+  uploadEntryState.linkPromise = task;
+
+  try {
+    return await task;
+  } catch (error) {
+    renderSupplierLinkStatus(error.message || "生成链接失败", "error");
+    throw error;
+  } finally {
+    if (uploadEntryState.linkPromise === task) {
+      uploadEntryState.linkPromise = null;
+    }
+  }
+}
+
 function initUploadEntry() {
   if (!toggleUploadEntryButton || !uploadEntryPanel) {
     return;
@@ -184,13 +339,44 @@ function initUploadEntry() {
     syncBodyModalState();
   };
 
+  for (const button of uploadModeButtons) {
+    button.addEventListener("click", () => {
+      setUploadEntryMode(button.dataset.uploadModeButton, { focus: true });
+    });
+  }
+
+  copyUploadLinkButton?.addEventListener("click", async () => {
+    const nextUrl = generatedUploadLinkInput?.value.trim() || "";
+    if (!nextUrl) {
+      return;
+    }
+
+    const idleText = copyUploadLinkButton.textContent;
+    copyUploadLinkButton.disabled = true;
+    copyUploadLinkButton.textContent = "复制中...";
+
+    try {
+      await copyTextToClipboard(nextUrl, generatedUploadLinkInput);
+      copyUploadLinkButton.textContent = "已复制";
+      window.setTimeout(() => {
+        copyUploadLinkButton.textContent = idleText;
+      }, 1600);
+    } catch (error) {
+      renderSupplierLinkStatus(error.message || "复制失败，请手动复制链接。", "error");
+      copyUploadLinkButton.textContent = idleText;
+    } finally {
+      window.setTimeout(() => {
+        copyUploadLinkButton.disabled = false;
+      }, 120);
+    }
+  });
+
   toggleUploadEntryButton.addEventListener("click", () => {
     const nextOpen = uploadEntryPanel.hidden;
     setUploadEntryOpen(nextOpen);
 
     if (nextOpen) {
-      const firstInput = createForm?.querySelector("input, textarea");
-      firstInput?.focus();
+      focusUploadEntryTarget();
     }
   });
 
@@ -251,9 +437,23 @@ function initUploadEntry() {
   );
 
   settingsDetails?.addEventListener("toggle", () => {
-    if (!settingsDetails.open) {
+    if (settingsDetails.open) {
+      if (accountDetails?.open) {
+        accountDetails.open = false;
+      }
       closeQjlHomepageMenu();
       return;
+    }
+  });
+
+  accountDetails?.addEventListener("toggle", () => {
+    if (!accountDetails.open) {
+      closeQjlHomepageMenu();
+      return;
+    }
+
+    if (settingsDetails?.open) {
+      settingsDetails.open = false;
     }
 
     if (qjlState.homepageSwitcherOpen) {
@@ -261,6 +461,9 @@ function initUploadEntry() {
     }
   });
 
+  renderSupplierLinkStatus("", "neutral");
+  setGeneratedUploadLink("", "");
+  setUploadEntryMode("direct");
   setUploadEntryOpen(false);
 }
 
@@ -533,9 +736,9 @@ createForm.addEventListener("submit", async (event) => {
       throw new Error(data.error || "创建失败");
     }
 
-    createResult.hidden = false;
-    createResult.textContent = `批次已创建：${data.name}。已接收 ${data.fileCount} 个文件，导入 ${data.totalParsedCount} 条商品。`;
     createForm.reset();
+    createResult.hidden = true;
+    createResult.textContent = "";
     if (uploadEntryPanel) {
       uploadEntryPanel.hidden = true;
       uploadEntryPanel.setAttribute("aria-hidden", "true");
@@ -676,9 +879,6 @@ qjlLoginCheckButton?.addEventListener("click", async () => {
 
     applyQjlAccount(data);
     renderQjlAuthState(data.message || (data.loggedIn ? "群接龙已登录。" : "请先完成登录。"));
-    if (state.activeCollection) {
-      updateActiveCollectionCopy();
-    }
   } catch (error) {
     renderQjlAuthState(error.message || "检查群接龙登录失败");
   } finally {
@@ -704,9 +904,6 @@ qjlRefreshProfileButton?.addEventListener("click", async () => {
 
     applyQjlAccount(data);
     renderQjlAuthState(data.message || "用户画像已刷新。");
-    if (state.activeCollection) {
-      updateActiveCollectionCopy();
-    }
   } catch (error) {
     renderQjlAuthState(error.message || "刷新用户画像失败");
   } finally {
@@ -732,9 +929,6 @@ qjlLogoutButton?.addEventListener("click", async () => {
 
     applyQjlAccount(data);
     renderQjlAuthState("已退出群接龙登录。");
-    if (state.activeCollection) {
-      updateActiveCollectionCopy();
-    }
   } catch (error) {
     renderQjlAuthState(error.message || "退出群接龙失败");
   } finally {
@@ -791,10 +985,13 @@ if (productForm) {
   });
 }
 
-clearChatButton.addEventListener("click", () => {
+function clearChatConversation() {
   state.chatMessages = [];
   renderChatPanel();
-});
+}
+
+clearChatButton?.addEventListener("click", clearChatConversation);
+clearDetailFullscreenChatButton?.addEventListener("click", clearChatConversation);
 
 chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -1011,6 +1208,77 @@ function updateSettingsSummary() {
     : "未配置";
 }
 
+function getQjlDisplayName(account = qjlState.account) {
+  if (!account) {
+    return "";
+  }
+
+  return String(account.nickname || account.ghName || account.uid || "").trim();
+}
+
+function getQjlAvatarUrl(account = qjlState.account) {
+  if (!account) {
+    return "";
+  }
+
+  return String(
+    account.avatarUrl ||
+      account.currentHomepage?.logoUrl ||
+      account.homepageList?.find?.((item) => item.ghCode === account.ghId)?.logoUrl ||
+      ""
+  ).trim();
+}
+
+function getQjlAvatarFallbackText(account = qjlState.account) {
+  const candidate = getQjlDisplayName(account) || (qjlState.pendingLogin ? "待" : "群");
+  return Array.from(candidate)[0] || "群";
+}
+
+function syncQjlAvatarPresentation(account = qjlState.account) {
+  const avatarUrl = getQjlAvatarUrl(account);
+  const fallbackText = getQjlAvatarFallbackText(account);
+  const displayName = getQjlDisplayName(account);
+  const activeHomepageName = String(account?.currentHomepage?.ghName || account?.ghName || "").trim();
+
+  const applyAvatar = (imageElement, fallbackElement) => {
+    if (fallbackElement) {
+      fallbackElement.textContent = fallbackText;
+    }
+
+    if (!imageElement) {
+      return;
+    }
+
+    if (avatarUrl) {
+      imageElement.src = avatarUrl;
+      imageElement.hidden = false;
+    } else {
+      imageElement.removeAttribute("src");
+      imageElement.hidden = true;
+    }
+  };
+
+  applyAvatar(qjlAvatarImage, qjlAvatarFallback);
+  applyAvatar(qjlAvatarImageLarge, qjlAvatarFallbackLarge);
+
+  if (qjlAccountName) {
+    qjlAccountName.textContent = qjlState.loggedIn && displayName ? displayName : "未登录群接龙";
+  }
+
+  if (qjlAccountMeta) {
+    if (qjlState.loggedIn && account) {
+      qjlAccountMeta.textContent = [
+        account.uid ? `uid ${account.uid}` : "",
+        activeHomepageName && activeHomepageName !== displayName ? activeHomepageName : ""
+      ]
+        .filter(Boolean)
+        .join(" · ");
+    } else {
+      qjlAccountMeta.textContent = qjlState.pendingLogin ? "待确认登录" : "点击开始登录";
+    }
+  }
+}
+
 function applyQjlAccount(data) {
   qjlState.loggedIn = Boolean(data?.loggedIn);
   qjlState.pendingLogin = Boolean(data?.pendingLogin);
@@ -1068,6 +1336,8 @@ function renderQjlAuthState(message) {
   if (!qjlAuthStatus) {
     return;
   }
+
+  syncQjlAvatarPresentation(qjlState.account);
 
   let statusText = "";
   let showStatus = true;
@@ -1232,9 +1502,6 @@ function renderQjlHomepageMenu(account) {
         applyQjlAccount(data);
         closeQjlHomepageMenu();
         renderQjlAuthState(data.message || "已切换群接龙主页。");
-        if (state.activeCollection) {
-          updateActiveCollectionCopy();
-        }
       } catch (error) {
         button.disabled = false;
         button.innerHTML = originalHtml;
@@ -1242,27 +1509,6 @@ function renderQjlHomepageMenu(account) {
       }
     });
   }
-}
-
-function buildActiveCollectionDescription(collection) {
-  const base =
-    collection.description ||
-    "勾选货盘后，可以直接和 AI 对话，继续分析这批货盘的价格、品类和风险点。";
-  const profileSummary = qjlState.account?.profileSummary || "";
-
-  if (qjlState.loggedIn && profileSummary) {
-    return `${base} 当前会结合群接龙画像一起分析：${profileSummary}`;
-  }
-
-  return base;
-}
-
-function updateActiveCollectionCopy() {
-  if (!state.activeCollection || !detailDescription) {
-    return;
-  }
-
-  detailDescription.textContent = buildActiveCollectionDescription(state.activeCollection);
 }
 
 function renderCollections() {
@@ -1315,10 +1561,6 @@ async function selectCollection(collection) {
 
   emptyState.hidden = true;
   detailContent.hidden = false;
-
-  detailBadge.textContent = `当前批次 · ${formatDate(collection.createdAt)}`;
-  detailName.textContent = collection.name;
-  detailDescription.textContent = buildActiveCollectionDescription(collection);
   if (detailUploadCount) {
     detailUploadCount.textContent = collection.uploadCount || 0;
   }
@@ -1811,6 +2053,15 @@ function renderChatPanel(statusMessage = "", pending = false) {
   const selectedIds = new Set(getSelectedUploadIds());
   const selectedUploads = items.filter((item) => selectedIds.has(item.id));
   const messages = getChatMessages();
+  const canClearChat = messages.length > 0;
+
+  if (clearChatButton) {
+    clearChatButton.disabled = !canClearChat;
+  }
+
+  if (clearDetailFullscreenChatButton) {
+    clearDetailFullscreenChatButton.disabled = !canClearChat;
+  }
 
   if (statusMessage) {
     chatSelectionStatus.hidden = false;

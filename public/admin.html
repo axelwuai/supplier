@@ -19,34 +19,93 @@
           </div>
         </div>
 
-        <details id="settings-details" class="settings-flyout">
-          <summary class="settings-icon-button" aria-label="设置">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.03 7.03 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 2h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.58.23-1.12.54-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.48a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.5.39 1.05.71 1.63.94l.36 2.54a.5.5 0 0 0 .49.42h3.8a.5.5 0 0 0 .49-.42l.36-2.54c.58-.23 1.12-.54 1.63-.94l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"
-              />
-            </svg>
-          </summary>
+        <div class="topbar-actions">
+          <details id="settings-details" class="settings-flyout">
+            <summary class="settings-icon-button" aria-label="模型 API 设置" title="模型 API 设置">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.03 7.03 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 2h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.58.23-1.12.54-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.48a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.5.39 1.05.71 1.63.94l.36 2.54a.5.5 0 0 0 .49.42h3.8a.5.5 0 0 0 .49-.42l.36-2.54c.58-.23 1.12-.54 1.63-.94l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"
+                />
+              </svg>
+            </summary>
 
-          <div class="settings-flyout-panel">
-            <div class="settings-flyout-head">
-              <div>
-                <strong>设置</strong>
-                <span id="settings-summary-text">未配置</span>
+            <div class="settings-flyout-panel">
+              <div class="settings-flyout-head">
+                <div>
+                  <strong>模型 API 设置</strong>
+                  <span id="settings-summary-text">未配置</span>
+                </div>
               </div>
+
+              <form id="llm-config-form" class="stack-form compact-form">
+                <label>
+                  模型供应方式
+                  <select name="provider">
+                    <option value="dashscope-compatible">OpenAI 兼容接口</option>
+                  </select>
+                </label>
+
+                <label>
+                  接口地址
+                  <input
+                    type="text"
+                    name="baseUrl"
+                    placeholder="例如：https://dashscope.aliyuncs.com/compatible-mode/v1"
+                    required
+                  />
+                </label>
+
+                <label>
+                  模型名称
+                  <input type="text" name="model" placeholder="例如：qwen-plus-latest" required />
+                </label>
+
+                <label>
+                  API Key
+                  <input type="password" name="apiKey" placeholder="留空则保留当前已保存的 Key" />
+                </label>
+
+                <div class="dual-actions">
+                  <button type="submit" class="btn-primary btn-md">保存配置</button>
+                  <button type="button" id="clear-llm-config" class="btn-ghost btn-md">清空配置</button>
+                </div>
+              </form>
+
+              <div id="llm-config-status" class="callout subtle-callout"></div>
             </div>
+          </details>
 
-            <section class="settings-section">
-              <div class="settings-section-head">
-                <strong>群接龙登录</strong>
-                <span id="qjl-auth-summary">未登录</span>
+          <details id="account-details" class="account-flyout">
+            <summary class="account-avatar-button" aria-label="群接龙账号" title="群接龙账号">
+              <span class="account-avatar">
+                <img id="qjl-avatar-image" alt="" hidden />
+                <span id="qjl-avatar-fallback">群</span>
+              </span>
+            </summary>
+
+            <div class="settings-flyout-panel account-flyout-panel">
+              <div class="account-flyout-head">
+                <span class="account-avatar account-avatar-lg">
+                  <img id="qjl-avatar-image-large" alt="" hidden />
+                  <span id="qjl-avatar-fallback-large">群</span>
+                </span>
+                <div class="account-flyout-copy">
+                  <strong id="qjl-account-name">未登录群接龙</strong>
+                  <span id="qjl-account-meta">点击开始登录</span>
+                </div>
               </div>
 
-              <div id="qjl-auth-status" class="callout subtle-callout">
-                登录后会基于群接龙主页信息生成用户画像，并在货盘分析时自动带入。
-              </div>
+              <section class="settings-section">
+                <div class="settings-section-head">
+                  <strong>群接龙账号</strong>
+                  <span id="qjl-auth-summary">未登录</span>
+                </div>
 
-              <div id="qjl-login-link" class="callout subtle-callout" hidden></div>
+                <div id="qjl-auth-status" class="callout subtle-callout">
+                  登录后会基于群接龙主页信息生成用户画像，并在货盘分析时自动带入。
+                </div>
+
+                <div id="qjl-login-link" class="callout subtle-callout" hidden></div>
 
                 <div id="qjl-profile-preview" class="account-card" hidden>
                   <div class="account-card-head">
@@ -74,47 +133,12 @@
 
                 <div class="dual-actions compact-actions">
                   <button type="button" id="qjl-refresh-profile" class="btn-ghost btn-sm">更新画像</button>
-                <button type="button" id="qjl-logout" class="btn-ghost btn-sm">退出登录</button>
-              </div>
-            </section>
-
-            <form id="llm-config-form" class="stack-form compact-form">
-              <label>
-                模型供应方式
-                <select name="provider">
-                  <option value="dashscope-compatible">OpenAI 兼容接口</option>
-                </select>
-              </label>
-
-              <label>
-                接口地址
-                <input
-                  type="text"
-                  name="baseUrl"
-                  placeholder="例如：https://dashscope.aliyuncs.com/compatible-mode/v1"
-                  required
-                />
-              </label>
-
-              <label>
-                模型名称
-                <input type="text" name="model" placeholder="例如：qwen-plus-latest" required />
-              </label>
-
-              <label>
-                API Key
-                <input type="password" name="apiKey" placeholder="留空则保留当前已保存的 Key" />
-              </label>
-
-              <div class="dual-actions">
-                <button type="submit" class="btn-primary btn-md">保存配置</button>
-                <button type="button" id="clear-llm-config" class="btn-ghost btn-md">清空配置</button>
-              </div>
-            </form>
-
-            <div id="llm-config-status" class="callout subtle-callout"></div>
-          </div>
-        </details>
+                  <button type="button" id="qjl-logout" class="btn-ghost btn-sm">退出登录</button>
+                </div>
+              </section>
+            </div>
+          </details>
+        </div>
       </header>
 
       <main class="workspace-stage">
@@ -180,6 +204,20 @@
             <div class="workspace-panel-actions">
               <button
                 type="button"
+                id="clear-chat"
+                class="toolbar-icon-button"
+                aria-label="清空对话"
+                title="清空对话"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M9.75 3.75a2.25 2.25 0 0 0-2.18 1.69l-.14.56H5.25a.75.75 0 0 0 0 1.5h.68l.87 10.02a2.25 2.25 0 0 0 2.24 2.05h6.92a2.25 2.25 0 0 0 2.24-2.05l.87-10.02h.68a.75.75 0 0 0 0-1.5h-2.18l-.14-.56a2.25 2.25 0 0 0-2.18-1.69h-4.5Zm6.73 3.75-.11-.44a.75.75 0 0 0-.72-.56h-4.5a.75.75 0 0 0-.72.56l-.11.44h6.16Zm1.06 1.5-.82 9.41a.75.75 0 0 1-.75.68H9.04a.75.75 0 0 1-.75-.68L7.47 9h10.32Zm-6.29 1.75a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0v-4.5a.75.75 0 0 1 .75-.75Zm3.5 0a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0v-4.5a.75.75 0 0 1 .75-.75Z"
+                    fill="currentColor"
+                  />
+                </svg>
+              </button>
+              <button
+                type="button"
                 id="toggle-detail-fullscreen"
                 class="toolbar-icon-button"
                 aria-label="全屏查看 AI 对话"
@@ -205,15 +243,6 @@
             </div>
 
             <div id="detail-content" class="chat-workspace" hidden>
-              <div class="detail-header chat-topbar">
-                <div>
-                  <span class="hero-badge" id="detail-badge">当前批次</span>
-                  <h2 id="detail-name"></h2>
-                  <p id="detail-description"></p>
-                </div>
-                <button type="button" id="clear-chat" class="link-button">清空对话</button>
-              </div>
-
               <section class="chat-panel workspace-chat-panel">
                 <div id="chat-selection-status" class="chat-selection-status"></div>
                 <div id="chat-messages" class="chat-messages"></div>
@@ -308,12 +337,31 @@
           <div class="upload-entry-inline-head modal-head">
             <div>
               <strong id="upload-modal-title">新建收集批次</strong>
-              <span>上传多个 Excel / CSV 文件，系统会自动归入同一批次。</span>
+              <span>支持自己直接上传，或者生成一个专属链接发给供货商上传。</span>
             </div>
             <button type="button" id="close-upload-entry" class="link-button modal-close-button">关闭</button>
           </div>
 
-          <form id="create-form" class="stack-form compact-stack-form">
+          <div class="upload-mode-switch" role="tablist" aria-label="选择新建批次方式">
+            <button
+              type="button"
+              class="upload-mode-button is-active"
+              data-upload-mode-button="direct"
+              aria-pressed="true"
+            >
+              自己上传货盘
+            </button>
+            <button
+              type="button"
+              class="upload-mode-button"
+              data-upload-mode-button="link"
+              aria-pressed="false"
+            >
+              邀请供货商上传货盘
+            </button>
+          </div>
+
+          <form id="create-form" class="stack-form compact-stack-form" data-upload-mode-panel="direct">
             <label>
               批次名称
               <input type="text" name="name" placeholder="比如：5月水果备选货盘" required />
@@ -339,6 +387,25 @@
 
             <button type="submit" class="btn-primary btn-md">创建批次并上传</button>
           </form>
+
+          <div class="stack-form compact-stack-form" data-upload-mode-panel="link" hidden>
+            <div id="create-link-result" class="callout" hidden></div>
+
+            <div id="upload-link-card" class="upload-link-card" hidden>
+              <div class="upload-link-card-head">
+                <span>复制下面的链接发给供货商，每位供货商上传成功后，系统都会自动生成一个独立批次。</span>
+              </div>
+
+              <div class="upload-link-field">
+                <input id="generated-upload-link" type="text" readonly aria-label="供货商上传链接" />
+                <button type="button" id="copy-upload-link" class="btn-ghost btn-md">复制链接</button>
+              </div>
+
+              <a id="open-upload-link" class="upload-link-preview" href="#" target="_blank" rel="noreferrer" hidden>
+                打开上传页预览
+              </a>
+            </div>
+          </div>
 
           <div id="create-result" class="callout" hidden></div>
         </div>
@@ -391,19 +458,35 @@
               <strong id="detail-fullscreen-title">AI对话</strong>
               <span>完整展示当前批次说明、对话消息和输入区，方便连续查看与提问。</span>
             </div>
-            <button
-              type="button"
-              id="close-detail-fullscreen"
-              class="toolbar-icon-button modal-icon-button"
-              aria-label="取消全屏查看 AI 对话"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M8.75 3a.75.75 0 0 1 .75.75V7a.75.75 0 0 1-1.5 0V5.56L4.28 9.28a.75.75 0 1 1-1.06-1.06L6.94 4.5H5.5a.75.75 0 0 1 0-1.5h3.25Zm6.5 0h3.25a.75.75 0 0 1 0 1.5h-1.44l3.72 3.72a.75.75 0 1 1-1.06 1.06L15.5 5.56V7a.75.75 0 0 1-1.5 0V3.75a.75.75 0 0 1 .75-.75Zm-6 10.5a.75.75 0 0 1 .75.75v3.19l3.72-3.72a.75.75 0 1 1 1.06 1.06L10.56 19H12a.75.75 0 0 1 0 1.5H8.75A.75.75 0 0 1 8 19.75v-5.5a.75.75 0 0 1 .75-.75Zm5.25.75a.75.75 0 0 1 1.5 0v3.19l3.72-3.72a.75.75 0 1 1 1.06 1.06L17.06 19h1.44a.75.75 0 0 1 0 1.5h-3.25a.75.75 0 0 1-.75-.75v-5.5Z"
-                  fill="currentColor"
-                />
-              </svg>
-            </button>
+            <div class="modal-head-actions">
+              <button
+                type="button"
+                id="clear-detail-fullscreen-chat"
+                class="toolbar-icon-button modal-icon-button"
+                aria-label="清空对话"
+                title="清空对话"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M9.75 3.75a2.25 2.25 0 0 0-2.18 1.69l-.14.56H5.25a.75.75 0 0 0 0 1.5h.68l.87 10.02a2.25 2.25 0 0 0 2.24 2.05h6.92a2.25 2.25 0 0 0 2.24-2.05l.87-10.02h.68a.75.75 0 0 0 0-1.5h-2.18l-.14-.56a2.25 2.25 0 0 0-2.18-1.69h-4.5Zm6.73 3.75-.11-.44a.75.75 0 0 0-.72-.56h-4.5a.75.75 0 0 0-.72.56l-.11.44h6.16Zm1.06 1.5-.82 9.41a.75.75 0 0 1-.75.68H9.04a.75.75 0 0 1-.75-.68L7.47 9h10.32Zm-6.29 1.75a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0v-4.5a.75.75 0 0 1 .75-.75Zm3.5 0a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0v-4.5a.75.75 0 0 1 .75-.75Z"
+                    fill="currentColor"
+                  />
+                </svg>
+              </button>
+              <button
+                type="button"
+                id="close-detail-fullscreen"
+                class="toolbar-icon-button modal-icon-button"
+                aria-label="取消全屏查看 AI 对话"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M8.75 3a.75.75 0 0 1 .75.75V7a.75.75 0 0 1-1.5 0V5.56L4.28 9.28a.75.75 0 1 1-1.06-1.06L6.94 4.5H5.5a.75.75 0 0 1 0-1.5h3.25Zm6.5 0h3.25a.75.75 0 0 1 0 1.5h-1.44l3.72 3.72a.75.75 0 1 1-1.06 1.06L15.5 5.56V7a.75.75 0 0 1-1.5 0V3.75a.75.75 0 0 1 .75-.75Zm-6 10.5a.75.75 0 0 1 .75.75v3.19l3.72-3.72a.75.75 0 1 1 1.06 1.06L10.56 19H12a.75.75 0 0 1 0 1.5H8.75A.75.75 0 0 1 8 19.75v-5.5a.75.75 0 0 1 .75-.75Zm5.25.75a.75.75 0 0 1 1.5 0v3.19l3.72-3.72a.75.75 0 1 1 1.06 1.06L17.06 19h1.44a.75.75 0 0 1 0 1.5h-3.25a.75.75 0 0 1-.75-.75v-5.5Z"
+                    fill="currentColor"
+                  />
+                </svg>
+              </button>
+            </div>
           </div>
 
           <div id="detail-fullscreen-target" class="compare-fullscreen-target detail-fullscreen-target"></div>

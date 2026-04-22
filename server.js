@@ -275,29 +275,23 @@ app.get("/template.xlsx", (_req, res) => {
   res.send(buffer);
 });
 
-app.get("/u/:token", (_req, res) => {
-  res.status(410).send(`
-    <!DOCTYPE html>
-    <html lang="zh-CN">
-      <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>上传入口已停用</title>
-        <style>
-          body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f7f1e5; font-family: "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif; color: #322d25; }
-          .card { width: min(560px, calc(100% - 40px)); background: white; border-radius: 24px; padding: 28px; box-shadow: 0 16px 60px rgba(50, 45, 37, 0.12); }
-          h1 { margin-top: 0; }
-          p { line-height: 1.7; color: #6b5f52; }
-        </style>
-      </head>
-      <body>
-        <div class="card">
-          <h1>旧的上传链接模式已停用</h1>
-          <p>请在软件首页创建收集批次时，直接选择并上传多个货盘文件。系统会自动把这些文件归入同一个批次。</p>
-        </div>
-      </body>
-    </html>
-  `);
+app.get("/u/:token", (req, res) => {
+  const token = String(req.params.token || "").trim();
+  const target = resolvePublicUploadTarget(token);
+
+  if (!target) {
+    res.status(404).send(renderMissingLinkPage());
+    return;
+  }
+
+  res.send(renderUploadPage(target));
+});
+
+app.post("/api/upload-invites", (req, res) => {
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  const note = String(body.note || "").trim();
+  const invite = createUploadInvite(note);
+  res.status(201).json(formatUploadInvite(invite));
 });
 
 app.post("/api/collections", (req, res) => {
@@ -309,18 +303,9 @@ app.post("/api/collections", (req, res) => {
     return;
   }
 
-  const id = crypto.randomUUID();
-  const uploadToken = crypto.randomBytes(18).toString("hex");
-  const now = new Date().toISOString();
-
-  db.prepare(
-    `
-    INSERT INTO collections (id, name, description, upload_token, created_at)
-    VALUES (?, ?, ?, ?, ?)
-    `
-  ).run(id, name, description, uploadToken, now);
-
-  res.status(201).json(formatCollection(getCollectionById(id)));
+  const collection = buildCollectionRecord({ name, description });
+  insertCollectionRecord(collection);
+  res.status(201).json(formatCollection(getCollectionById(collection.id)));
 });
 
 app.post("/api/collections/import-batch", upload.array("files", 30), async (req, res) => {
@@ -339,13 +324,7 @@ app.post("/api/collections/import-batch", upload.array("files", 30), async (req,
     return;
   }
 
-  const collection = {
-    id: crypto.randomUUID(),
-    name,
-    description,
-    upload_token: crypto.randomBytes(18).toString("hex"),
-    created_at: new Date().toISOString()
-  };
+  const collection = buildCollectionRecord({ name, description });
 
   try {
     const parsedFiles = [];
@@ -1257,8 +1236,95 @@ app.get("/api/compare/external-search", async (req, res) => {
   }
 });
 
-app.post("/api/public/upload/:token", (_req, res) => {
-  res.status(410).json({ error: "旧的上传链接模式已停用，请在软件首页创建批次时直接上传多个货盘文件。" });
+app.post("/api/public/upload/:token", upload.single("file"), async (req, res) => {
+  const token = String(req.params.token || "").trim();
+  const supplierName = String(req.body.supplierName || "").trim();
+  const file = req.file || null;
+  const target = resolvePublicUploadTarget(token);
+
+  if (!target) {
+    cleanupUpload(file);
+    res.status(404).json({ error: "上传链接不可用，请联系团长重新发送。" });
+    return;
+  }
+
+  if (!supplierName) {
+    cleanupUpload(file);
+    res.status(400).json({ error: "请先填写供应商名称" });
+    return;
+  }
+
+  if (!file) {
+    res.status(400).json({ error: "请上传一个 Excel 或 CSV 文件" });
+    return;
+  }
+
+  let storedFile = null;
+  let collection = target.type === "collection" ? target.collection : null;
+  let createdCollection = false;
+
+  try {
+    const parsed = parseWorkbook(file.path, supplierName);
+
+    if (parsed.parsedCount === 0) {
+      throw new Error("没有识别到可导入的商品数据，请检查表头是否包含商品名和价格等字段");
+    }
+
+    if (!collection) {
+      collection = buildSupplierUploadCollectionRecord({
+        supplierName,
+        invite: target.invite
+      });
+      insertCollectionRecord(collection);
+      createdCollection = true;
+    }
+
+    storedFile = moveUploadIntoCollectionFolder({
+      collectionId: collection.id,
+      file
+    });
+
+    const summary = await summarizeCatalogForStorage({
+      collection,
+      supplierName,
+      originalFilename: file.originalname,
+      parsed
+    });
+    const result = importUploadedFile({
+      collection,
+      supplierName,
+      file,
+      parsed,
+      storedFile,
+      summary,
+      inviteId: target.type === "invite" ? target.invite.id : ""
+    });
+
+    if (target.type === "invite") {
+      markUploadInviteUsed(target.invite.id);
+    }
+
+    if (target.type === "legacy-invite" && canRemoveLegacyInviteStub(target.collection)) {
+      deleteCollectionCascade(target.collection.id);
+      cleanupStoredUploadsByCollection(target.collection.id);
+    }
+
+    res.status(201).json({
+      ok: true,
+      collection: formatCollection(getCollectionById(collection.id)),
+      supplierName,
+      rowCount: result.rowCount,
+      parsedCount: result.parsedCount
+    });
+  } catch (error) {
+    cleanupUpload(file);
+    cleanupStoredUpload(storedFile);
+    if (createdCollection && collection?.id) {
+      deleteCollectionCascade(collection.id);
+      cleanupStoredUploadsByCollection(collection.id);
+    }
+    res.status(400).json({ error: error.message || "上传失败，请检查文件后重试" });
+  }
 });
 
 app.use((error, _req, res, _next) => {
@@ -1289,6 +1355,16 @@ function initDb() {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS upload_invites (
+      id TEXT PRIMARY KEY,
+      token TEXT NOT NULL UNIQUE,
+      note TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      use_count INTEGER NOT NULL DEFAULT 0,
+      last_used_at TEXT,
+      created_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS supplier_uploads (
       id TEXT PRIMARY KEY,
       collection_id TEXT NOT NULL,
@@ -1301,6 +1377,7 @@ function initDb() {
       product_names_summary TEXT,
       catalog_overview TEXT,
       analysis_source TEXT,
+      invite_id TEXT,
       uploaded_at TEXT NOT NULL,
       FOREIGN KEY (collection_id) REFERENCES collections (id)
     );
@@ -1358,6 +1435,12 @@ function initDb() {
   ensureTableColumn("supplier_uploads", "product_names_summary", "TEXT");
   ensureTableColumn("supplier_uploads", "catalog_overview", "TEXT");
   ensureTableColumn("supplier_uploads", "analysis_source", "TEXT");
+  ensureTableColumn("supplier_uploads", "invite_id", "TEXT");
+  ensureTableColumn("upload_invites", "note", "TEXT");
+  ensureTableColumn("upload_invites", "status", "TEXT NOT NULL DEFAULT 'active'");
+  ensureTableColumn("upload_invites", "use_count", "INTEGER NOT NULL DEFAULT 0");
+  ensureTableColumn("upload_invites", "last_used_at", "TEXT");
+  ensureTableColumn("upload_invites", "created_at", "TEXT NOT NULL DEFAULT ''");
   ensureTableColumn("qjl_accounts", "nickname", "TEXT");
   ensureTableColumn("qjl_accounts", "gh_id", "TEXT");
   ensureTableColumn("qjl_accounts", "gh_name", "TEXT");
@@ -1602,12 +1685,14 @@ function formatQjlAccount(row) {
   const feedSummary = safeParseJson(row.feed_summary_json) || {};
   const homepageList = normalizeQjlHomes(safeParseJson(row.homepage_list_json) || {});
   const currentHomepage = homepageList.find((item) => String(item?.ghCode || "") === String(row.gh_id || "")) || null;
+  const formattedCurrentHomepage = currentHomepage ? formatQjlHomepageOption(currentHomepage) : null;
 
   return {
     uid: String(row.uid || ""),
     nickname: String(row.nickname || ""),
     ghId: String(row.gh_id || ""),
     ghName: String(row.gh_name || ""),
+    avatarUrl: formattedCurrentHomepage?.logoUrl || "",
     fansNum: Number(row.fans_num || 0),
     orderNum: Number(row.order_num || 0),
     tokenHint: String(row.token_hint || ""),
@@ -1615,16 +1700,35 @@ function formatQjlAccount(row) {
     profileUpdatedAt: row.profile_updated_at || "",
     profileSummary: String(row.profile_summary || ""),
     homepageList: homepageList.map(formatQjlHomepageOption),
-    currentHomepage: currentHomepage ? formatQjlHomepageOption(currentHomepage) : null,
+    currentHomepage: formattedCurrentHomepage,
     profile,
     feedSummary
   };
+}
+
+function normalizeQjlMediaUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  const unwrapped = raw.replace(/^\/+(https?:\/\/)/i, "$1");
+  if (/^https?:\/\//i.test(unwrapped)) {
+    return unwrapped;
+  }
+
+  if (/^\/{2,}[a-z0-9.-]+\.[a-z]{2,}\//i.test(raw)) {
+    return `https:${raw.replace(/^\/+/, "//")}`;
+  }
+
+  return `${defaultQjlApiBase.replace(/\/$/, "")}/${raw.replace(/^\/+/, "")}`;
 }
 
 function formatQjlHomepageOption(home) {
   return {
     ghCode: String(home?.ghCode || "").trim(),
     ghName: String(home?.ghName || "").trim(),
+    logoUrl: normalizeQjlMediaUrl(home?.logoUrl || home?.brandLogoUrl || home?.weakGhLogoUrl),
     fansNum: toSafeInt(home?.fansNum),
     orderNum: toSafeInt(home?.ghOrderNum),
     ghType: toSafeInt(home?.ghType),
@@ -1658,6 +1762,16 @@ function cleanupUpload(file) {
 function cleanupUploads(files) {
   for (const file of files || []) {
     cleanupUpload(file);
+  }
+}
+
+function cleanupStoredUpload(storedFile) {
+  if (!storedFile?.absolutePath) {
+    return;
+  }
+
+  if (fs.existsSync(storedFile.absolutePath)) {
+    fs.unlinkSync(storedFile.absolutePath);
   }
 }
 
@@ -1710,13 +1824,14 @@ function supplierNameFromFilename(originalname) {
   return filename.trim().replace(/[_-]+/g, " ").replace(/\s+/g, " ") || "未命名供应商";
 }
 
-function importUploadedFile({ collection, supplierName, file }) {
-  const parsed = parseWorkbook(file.path, supplierName);
+function importUploadedFile({ collection, supplierName, file, parsed, storedFile, summary, inviteId = "" }) {
+  const normalizedParsed = parsed || parseWorkbook(file.path, supplierName);
 
-  if (parsed.parsedCount === 0) {
+  if (normalizedParsed.parsedCount === 0) {
     throw new Error("没有识别到可导入的商品数据，请检查表头是否包含商品名和价格等字段");
   }
 
+  const normalizedSummary = summary || buildCatalogFallbackSummary({ parsed: normalizedParsed });
   const uploadId = crypto.randomUUID();
   const now = new Date().toISOString();
 
@@ -1730,8 +1845,13 @@ function importUploadedFile({ collection, supplierName, file }) {
       stored_filename,
       row_count,
       parsed_count,
+      category_summary,
+      product_names_summary,
+      catalog_overview,
+      analysis_source,
+      invite_id,
       uploaded_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `
   );
 
@@ -1760,13 +1880,18 @@ function importUploadedFile({ collection, supplierName, file }) {
       collection.id,
       supplierName,
       file.originalname,
-      file.filename,
-      parsed.rowCount,
-      parsed.parsedCount,
+      storedFile?.relativePath || file.filename,
+      normalizedParsed.rowCount,
+      normalizedParsed.parsedCount,
+      normalizedSummary.categorySummary,
+      normalizedSummary.productNamesSummary,
+      normalizedSummary.catalogOverview,
+      normalizedSummary.analysisSource,
+      inviteId || null,
       now
     );
 
-    for (const record of parsed.items) {
+    for (const record of normalizedParsed.items) {
       insertProduct.run(
         collection.id,
         uploadId,
@@ -1785,7 +1910,11 @@ function importUploadedFile({ collection, supplierName, file }) {
   });
 
   transaction();
-  return parsed;
+  return {
+    uploadId,
+    rowCount: normalizedParsed.rowCount,
+    parsedCount: normalizedParsed.parsedCount
+  };
 }
 
 function importBatchFilesIntoCollection({ collection, parsedFiles }) {
@@ -2688,6 +2817,250 @@ function getCollectionById(id) {
       `
     )
     .get(id);
+}
+
+function getCollectionByUploadToken(token) {
+  return db
+    .prepare(
+      `
+      SELECT
+        c.id,
+        c.name,
+        c.description,
+        c.upload_token,
+        c.created_at,
+        COUNT(DISTINCT su.id) AS upload_count,
+        COUNT(DISTINCT p.id) AS product_count
+      FROM collections c
+      LEFT JOIN supplier_uploads su ON su.collection_id = c.id
+      LEFT JOIN products p ON p.collection_id = c.id
+      WHERE c.upload_token = ?
+      GROUP BY c.id
+      `
+    )
+    .get(token);
+}
+
+function getUploadInviteById(id) {
+  return db
+    .prepare(
+      `
+      SELECT
+        id,
+        token,
+        note,
+        status,
+        use_count,
+        last_used_at,
+        created_at
+      FROM upload_invites
+      WHERE id = ?
+      LIMIT 1
+      `
+    )
+    .get(id);
+}
+
+function getUploadInviteByToken(token) {
+  return db
+    .prepare(
+      `
+      SELECT
+        id,
+        token,
+        note,
+        status,
+        use_count,
+        last_used_at,
+        created_at
+      FROM upload_invites
+      WHERE token = ?
+      LIMIT 1
+      `
+    )
+    .get(token);
+}
+
+function resolvePublicUploadTarget(token) {
+  const invite = getUploadInviteByToken(token);
+  if (invite && String(invite.status || "active").trim() !== "disabled") {
+    return {
+      type: "invite",
+      invite
+    };
+  }
+
+  const collection = getCollectionByUploadToken(token);
+  if (collection) {
+    if (isLegacyInviteCollection(collection)) {
+      return {
+        type: "legacy-invite",
+        collection
+      };
+    }
+
+    return {
+      type: "collection",
+      collection
+    };
+  }
+
+  return null;
+}
+
+function isLegacyInviteCollection(collection) {
+  const name = String(collection?.name || "").trim();
+  const description = String(collection?.description || "").trim();
+  return description === "由供货商上传链接自动创建" && /^供货商上传批次\s+\d{4}\/\d{2}\/\d{2}/.test(name);
+}
+
+function canRemoveLegacyInviteStub(collection) {
+  if (!isLegacyInviteCollection(collection)) {
+    return false;
+  }
+
+  return Number(collection?.upload_count || collection?.uploadCount || 0) <= 0 &&
+    Number(collection?.product_count || collection?.productCount || 0) <= 0;
+}
+
+function buildCollectionRecord({ name, description = "", uploadToken, createdAt, id } = {}) {
+  return {
+    id: id || crypto.randomUUID(),
+    name: String(name || "").trim(),
+    description: String(description || "").trim(),
+    upload_token: String(uploadToken || "").trim() || crypto.randomBytes(18).toString("hex"),
+    created_at: createdAt || new Date().toISOString()
+  };
+}
+
+function insertCollectionRecord(collection) {
+  db.prepare(
+    `
+    INSERT INTO collections (id, name, description, upload_token, created_at)
+    VALUES (?, ?, ?, ?, ?)
+    `
+  ).run(
+    collection.id,
+    collection.name,
+    collection.description,
+    collection.upload_token,
+    collection.created_at
+  );
+}
+
+function createUploadInvite(note = "") {
+  const id = crypto.randomUUID();
+  const token = crypto.randomBytes(18).toString("hex");
+  const createdAt = new Date().toISOString();
+  const normalizedNote = String(note || "").trim();
+
+  db.prepare(
+    `
+    INSERT INTO upload_invites (id, token, note, status, use_count, last_used_at, created_at)
+    VALUES (?, ?, ?, 'active', 0, NULL, ?)
+    `
+  ).run(id, token, normalizedNote, createdAt);
+
+  return {
+    id,
+    token,
+    note: normalizedNote,
+    status: "active",
+    use_count: 0,
+    last_used_at: null,
+    created_at: createdAt
+  };
+}
+
+function markUploadInviteUsed(inviteId, usedAt = new Date().toISOString()) {
+  if (!inviteId) {
+    return;
+  }
+
+  db.prepare(
+    `
+    UPDATE upload_invites
+    SET use_count = use_count + 1,
+        last_used_at = ?
+    WHERE id = ?
+    `
+  ).run(usedAt, inviteId);
+}
+
+function formatUploadInvite(row) {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    note: String(row.note || ""),
+    status: String(row.status || "active"),
+    useCount: Number(row.use_count || 0),
+    lastUsedAt: row.last_used_at || "",
+    createdAt: row.created_at,
+    uploadToken: row.token,
+    uploadUrl: `/u/${row.token}`
+  };
+}
+
+function formatSupplierUploadBatchTimestamp(value) {
+  const date = value instanceof Date ? value : new Date(value || Date.now());
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const seconds = String(date.getSeconds()).padStart(2, "0");
+  return `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`;
+}
+
+function collectionNameExists(name) {
+  return Boolean(
+    db.prepare(
+      `
+      SELECT 1
+      FROM collections
+      WHERE name = ?
+      LIMIT 1
+      `
+    ).get(name)
+  );
+}
+
+function buildUniqueCollectionName(baseName) {
+  let candidate = baseName;
+  let index = 2;
+
+  while (collectionNameExists(candidate)) {
+    candidate = `${baseName} · ${index}`;
+    index += 1;
+  }
+
+  return candidate;
+}
+
+function buildSupplierUploadCollectionRecord({ supplierName, invite }) {
+  const normalizedSupplierName = String(supplierName || "").trim() || "未命名供应商";
+  const baseName = `${normalizedSupplierName} · 供货商上传 · ${formatSupplierUploadBatchTimestamp(new Date())}`;
+  return buildCollectionRecord({
+    name: buildUniqueCollectionName(baseName),
+    description: String(invite?.note || "").trim() || "由供货商上传链接自动创建"
+  });
+}
+
+function deleteCollectionCascade(collectionId) {
+  if (!collectionId) {
+    return;
+  }
+
+  const transaction = db.transaction((id) => {
+    db.prepare("DELETE FROM products WHERE collection_id = ?").run(id);
+    db.prepare("DELETE FROM supplier_uploads WHERE collection_id = ?").run(id);
+    db.prepare("DELETE FROM collections WHERE id = ?").run(id);
+  });
+
+  transaction(collectionId);
 }
 
 function formatCollection(row) {
@@ -3876,9 +4249,32 @@ function uniqueStrings(values) {
   return result;
 }
 
-function renderUploadPage(collection) {
-  const escapedName = escapeHtml(collection.name);
-  const escapedDescription = escapeHtml(collection.description || "");
+function renderUploadPage(target) {
+  const isInvite = target?.type === "invite" || target?.type === "legacy-invite";
+  const uploadToken = escapeHtml(
+    target?.type === "invite"
+      ? String(target?.invite?.token || "")
+      : String(target?.collection?.upload_token || "")
+  );
+  const pageTitle = isInvite ? "邀请供货商上传货盘" : String(target?.collection?.name || "供应商货盘上传");
+  const pageDescription = isInvite
+    ? String(target?.invite?.note || "").trim() ||
+      "请填写供应商名称，并上传最新的 Excel / CSV 货盘。每位供货商上传成功后，系统都会自动生成一个独立批次，方便团长后续筛选、比价和分析。"
+    : String(target?.collection?.description || "").trim() ||
+      "请填写供应商名称，并上传最新的 Excel / CSV 货盘。系统会自动识别商品、价格与库存字段，方便后续统一整理和比价。";
+  const heroChipText = isInvite ? "每次上传成功后会自动生成独立批次" : "上传成功后将自动归入当前批次";
+  const heroNote = isInvite
+    ? "每位供货商的每次上传都会沉淀为单独批次，不会和其他供货商的货盘混在一起，方便团长后续筛选、比价和分析。"
+    : "上传完成后，团长会在“历史货盘批次”里直接看到你这次提交的货盘内容，并继续做筛选、比价和分析。";
+  const panelDescription = isInvite
+    ? "请保持文件内容完整，建议优先包含商品名称、规格、供货价、库存和起订量。系统会在上传成功后自动生成新的独立批次。"
+    : "请保持文件内容完整，建议优先包含商品名称、规格、供货价、库存和起订量。";
+  const escapedName = escapeHtml(pageTitle);
+  const escapedDescription = escapeHtml(pageDescription);
+  const escapedChipText = escapeHtml(heroChipText);
+  const escapedHeroNote = escapeHtml(heroNote);
+  const escapedPanelDescription = escapeHtml(panelDescription);
+  const escapedTargetType = isInvite ? "invite" : "collection";
 
   return `
     <!DOCTYPE html>
@@ -3890,151 +4286,338 @@ function renderUploadPage(collection) {
         <style>
           :root {
             color-scheme: light;
-            --bg: #f5efe3;
-            --card: rgba(255, 252, 246, 0.92);
-            --ink: #1e2b24;
-            --muted: #5b665f;
-            --line: rgba(30, 43, 36, 0.12);
-            --brand: #14532d;
-            --brand-soft: #dbe9dc;
-            --accent: #ca8a04;
+            --brand-900: #044C03;
+            --brand-800: #056B04;
+            --brand-700: #078505;
+            --brand-600: #09BA07;
+            --brand-500: #35C233;
+            --brand-400: #52D450;
+            --brand-100: #E2F8DE;
+            --brand-050: #F2FCEE;
+            --ink-900: #1A2029;
+            --ink-800: #2A3240;
+            --ink-700: #48505E;
+            --ink-600: #5F6672;
+            --ink-500: #7B8492;
+            --ink-300: #C9D0DA;
+            --ink-200: #E6EAF0;
+            --ink-100: #F2F4F7;
+            --page-base: #F6F8FB;
+            --surface-base: #FFFFFF;
+            --surface-soft: #FBFCFE;
+            --success-bg: #ECFDF3;
+            --success-text: #027A48;
+            --error-bg: #FEF2F2;
+            --error-text: #B42318;
+            --radius-control: 14px;
+            --radius-card: 24px;
+            --radius-pill: 999px;
+            --shadow-sm: 0 8px 24px rgba(20, 28, 39, 0.06);
+            --shadow-lg: 0 24px 64px rgba(20, 28, 39, 0.12);
+            --focus-ring: 0 0 0 4px rgba(9, 186, 7, 0.10);
+            --border-soft: 1px solid rgba(26, 32, 41, 0.08);
+            --border-strong: 1px solid rgba(26, 32, 41, 0.14);
           }
-          * { box-sizing: border-box; }
+          * {
+            box-sizing: border-box;
+          }
           body {
             margin: 0;
             min-height: 100vh;
-            font-family: "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
-            color: var(--ink);
+            font-family: "Inter", "PingFang SC", "Microsoft YaHei UI", -apple-system, BlinkMacSystemFont, sans-serif;
+            color: var(--ink-800);
             background:
-              radial-gradient(circle at top right, rgba(202, 138, 4, 0.18), transparent 30%),
-              radial-gradient(circle at bottom left, rgba(20, 83, 45, 0.18), transparent 32%),
-              var(--bg);
-            display: grid;
-            place-items: center;
-            padding: 24px;
+              radial-gradient(circle at top right, rgba(9, 186, 7, 0.10), transparent 28%),
+              radial-gradient(circle at bottom left, rgba(82, 212, 80, 0.08), transparent 30%),
+              var(--page-base);
+            padding: 28px 20px;
           }
-          .panel {
-            width: min(680px, 100%);
-            background: var(--card);
-            border: 1px solid var(--line);
-            border-radius: 24px;
-            box-shadow: 0 18px 70px rgba(30, 43, 36, 0.12);
-            padding: 28px;
-            backdrop-filter: blur(8px);
-          }
-          .eyebrow {
-            display: inline-flex;
-            padding: 6px 12px;
-            border-radius: 999px;
-            background: var(--brand-soft);
-            color: var(--brand);
-            font-size: 13px;
-            font-weight: 700;
-          }
-          h1 {
-            margin: 16px 0 10px;
-            font-size: clamp(28px, 6vw, 42px);
-            line-height: 1.1;
-          }
-          p {
-            color: var(--muted);
-            line-height: 1.7;
-          }
-          form {
-            margin-top: 24px;
+          .page-shell {
+            width: min(760px, 100%);
+            margin: 0 auto;
             display: grid;
             gap: 16px;
           }
-          label {
+          .hero-card,
+          .panel {
+            background: var(--surface-base);
+            border: var(--border-soft);
+            border-radius: var(--radius-card);
+            box-shadow: var(--shadow-sm);
+          }
+          .hero-card {
+            padding: 24px;
             display: grid;
-            gap: 8px;
+            gap: 18px;
+          }
+          .hero-top {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+          }
+          .eyebrow,
+          .hero-chip {
+            display: inline-flex;
+            align-items: center;
+            min-height: 28px;
+            padding: 0 12px;
+            border-radius: var(--radius-pill);
+            font-size: 12px;
+            line-height: 16px;
             font-weight: 600;
           }
-          input, button {
+          .eyebrow {
+            background: var(--brand-050);
+            color: var(--brand-700);
+          }
+          .hero-chip {
+            background: var(--ink-100);
+            color: var(--ink-700);
+          }
+          h1 {
+            margin: 0;
+            font-size: clamp(26px, 5vw, 28px);
+            line-height: 1.2;
+            font-weight: 700;
+            color: var(--ink-900);
+          }
+          .hero-copy {
+            display: grid;
+            gap: 10px;
+          }
+          .hero-copy p {
+            margin: 0;
+            color: var(--ink-700);
+            line-height: 1.7;
+            font-size: 14px;
+          }
+          .hero-note {
+            padding: 14px 16px;
+            border-radius: 16px;
+            background: var(--surface-soft);
+            border: var(--border-soft);
+            color: var(--ink-700);
+            font-size: 13px;
+            line-height: 1.6;
+          }
+          .panel {
+            padding: 24px;
+            display: grid;
+            gap: 18px;
+          }
+          .panel-head {
+            display: grid;
+            gap: 6px;
+          }
+          .panel-head strong {
+            font-size: 18px;
+            line-height: 1.4;
+            font-weight: 600;
+            color: var(--ink-900);
+          }
+          .panel-head span {
+            color: var(--ink-600);
+            font-size: 13px;
+            line-height: 1.55;
+          }
+          form {
+            display: grid;
+            gap: 16px;
+          }
+          .field {
+            display: grid;
+            gap: 8px;
+          }
+          .field-label {
+            font-size: 12px;
+            line-height: 1.4;
+            font-weight: 600;
+            color: var(--ink-600);
+          }
+          input,
+          button,
+          a {
             font: inherit;
           }
           input[type="text"],
           input[type="file"] {
             width: 100%;
-            padding: 14px 16px;
-            border-radius: 14px;
-            border: 1px solid var(--line);
-            background: white;
+            min-height: 44px;
+            padding: 0 14px;
+            border-radius: var(--radius-control);
+            border: 1px solid rgba(26, 32, 41, 0.10);
+            background: #ffffff;
+            color: var(--ink-900);
+            font-size: 14px;
+            line-height: 20px;
+            box-shadow: none;
+            transition: border-color 120ms ease-out, box-shadow 120ms ease-out, background-color 120ms ease-out;
+          }
+          input[type="file"] {
+            padding: 7px 8px;
+            color: var(--ink-600);
+          }
+          input[type="file"]::file-selector-button {
+            height: 30px;
+            margin-right: 12px;
+            padding: 0 12px;
+            border: 0;
+            border-radius: 999px;
+            background: var(--brand-050);
+            color: var(--brand-700);
+            font-weight: 600;
+            cursor: pointer;
+          }
+          input:hover {
+            border-color: rgba(26, 32, 41, 0.16);
+          }
+          input:focus {
+            outline: none;
+            border-color: var(--brand-700);
+            box-shadow: var(--focus-ring);
+          }
+          input::placeholder {
+            color: var(--ink-500);
+          }
+          .helper-row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            color: var(--ink-600);
+            font-size: 13px;
+            line-height: 1.55;
+          }
+          .helper-row a {
+            display: inline-flex;
+            align-items: center;
+            min-height: 32px;
+            padding: 0 12px;
+            border-radius: var(--radius-pill);
+            background: var(--brand-050);
+            color: var(--brand-700);
+            text-decoration: none;
+            font-weight: 600;
+          }
+          .helper-row a:hover {
+            background: var(--brand-100);
           }
           button {
             border: none;
-            border-radius: 14px;
-            padding: 14px 18px;
-            background: linear-gradient(135deg, var(--brand), #1f7a43);
+            min-height: 44px;
+            padding: 0 20px;
+            border-radius: var(--radius-control);
+            background: var(--brand-600);
             color: white;
-            font-weight: 700;
+            font-size: 14px;
+            line-height: 20px;
+            font-weight: 600;
             cursor: pointer;
+            box-shadow: none;
+            transition: background-color 120ms ease-out, transform 120ms ease-out, box-shadow 120ms ease-out;
+          }
+          button:hover {
+            background: var(--brand-700);
+            transform: translateY(-1px);
+          }
+          button:focus-visible {
+            outline: none;
+            box-shadow: var(--focus-ring);
           }
           button:disabled {
-            opacity: 0.7;
+            background: #E8ECF1;
+            color: #98A2B3;
             cursor: wait;
-          }
-          .helper {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 12px;
-            margin-top: 12px;
-            font-size: 14px;
-          }
-          .helper a {
-            color: var(--brand);
+            transform: none;
           }
           .result {
-            margin-top: 20px;
             padding: 14px 16px;
-            border-radius: 14px;
+            border-radius: 16px;
             display: none;
             line-height: 1.6;
+            font-size: 13px;
+            border: var(--border-soft);
           }
           .result.ok {
             display: block;
-            background: #e7f7eb;
-            color: #12522d;
+            background: var(--success-bg);
+            color: var(--success-text);
           }
           .result.error {
             display: block;
-            background: #fff1f2;
-            color: #9f1239;
+            background: var(--error-bg);
+            color: var(--error-text);
+          }
+          @media (max-width: 640px) {
+            body {
+              padding: 16px 12px;
+            }
+            .hero-card,
+            .panel {
+              padding: 18px 16px;
+            }
+            .helper-row {
+              align-items: stretch;
+            }
           }
         </style>
       </head>
       <body>
-        <section class="panel">
-          <div class="eyebrow">供应商货盘上传入口</div>
-          <h1>${escapedName}</h1>
-          <p>${escapedDescription || "请填写供应商名称，并上传最新的 Excel / CSV 货盘。系统会自动识别商品和价格，方便后续统一比价。"}</p>
+        <main class="page-shell">
+          <section class="hero-card">
+            <div class="hero-top">
+              <span class="eyebrow">供货商上传入口</span>
+              <span class="hero-chip">${escapedChipText}</span>
+            </div>
 
-          <form id="upload-form">
-            <label>
-              供应商名称
-              <input type="text" name="supplierName" placeholder="例如：山东果园直发" required />
-            </label>
+            <div class="hero-copy">
+              <h1>${escapedName}</h1>
+              <p>${escapedDescription}</p>
+            </div>
 
-            <label>
-              上传货盘文件
-              <input type="file" name="file" accept=".xlsx,.xls,.csv" required />
-            </label>
+            <div class="hero-note">${escapedHeroNote}</div>
+          </section>
 
-            <button type="submit">提交货盘</button>
-          </form>
+          <section class="panel">
+            <div class="panel-head">
+              <strong>填写并上传货盘</strong>
+              <span>${escapedPanelDescription}</span>
+            </div>
 
-          <div class="helper">
-            <span>支持格式：.xlsx、.xls、.csv，单个文件不超过 50MB</span>
-            <a href="/template.xlsx">下载模板</a>
-          </div>
+            <form id="upload-form">
+              <label class="field">
+                <span class="field-label">供应商名称</span>
+                <input type="text" name="supplierName" placeholder="例如：山东果园直发" required />
+              </label>
 
-          <div id="result" class="result"></div>
-        </section>
+              <label class="field">
+                <span class="field-label">上传货盘文件</span>
+                <input id="catalog-file" type="file" name="file" accept=".xlsx,.xls,.csv" required />
+              </label>
+
+              <div class="helper-row">
+                <span>支持格式：.xlsx、.xls、.csv，单个文件不超过 50MB。</span>
+              </div>
+
+              <button type="submit">提交货盘</button>
+              <div id="result" class="result"></div>
+            </form>
+          </section>
+        </main>
 
         <script>
           const form = document.getElementById("upload-form");
           const result = document.getElementById("result");
+          const fileInput = document.getElementById("catalog-file");
           const button = form.querySelector("button");
+          const uploadTargetType = "${escapedTargetType}";
+
+          fileInput.addEventListener("change", () => {
+            result.className = "result";
+            result.textContent = "";
+          });
 
           form.addEventListener("submit", async (event) => {
             event.preventDefault();
@@ -4045,7 +4628,7 @@ function renderUploadPage(collection) {
 
             try {
               const formData = new FormData(form);
-              const response = await fetch("/api/public/upload/${collection.upload_token}", {
+              const response = await fetch("/api/public/upload/${uploadToken}", {
                 method: "POST",
                 body: formData
               });
@@ -4056,7 +4639,11 @@ function renderUploadPage(collection) {
               }
 
               result.className = "result ok";
-              result.textContent = "上传成功：已接收 " + data.rowCount + " 行，识别并导入 " + data.parsedCount + " 条商品记录。";
+              if (uploadTargetType === "invite" && data.collection && data.collection.name) {
+                result.textContent = "上传成功：已创建独立批次“" + data.collection.name + "”，接收 " + data.rowCount + " 行，识别并导入 " + data.parsedCount + " 条商品记录。";
+              } else {
+                result.textContent = "上传成功：已接收 " + data.rowCount + " 行，识别并导入 " + data.parsedCount + " 条商品记录。";
+              }
               form.reset();
             } catch (error) {
               result.className = "result error";
@@ -4081,28 +4668,67 @@ function renderMissingLinkPage() {
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>链接不可用</title>
         <style>
+          :root {
+            --brand-700: #078505;
+            --brand-050: #F2FCEE;
+            --ink-900: #1A2029;
+            --ink-700: #48505E;
+            --surface-base: #FFFFFF;
+            --page-base: #F6F8FB;
+            --shadow-sm: 0 8px 24px rgba(20, 28, 39, 0.06);
+            --border-soft: 1px solid rgba(26, 32, 41, 0.08);
+          }
+          * {
+            box-sizing: border-box;
+          }
           body {
             margin: 0;
             min-height: 100vh;
             display: grid;
             place-items: center;
-            background: #f7f1e5;
-            color: #322d25;
-            font-family: "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+            background:
+              radial-gradient(circle at top right, rgba(9, 186, 7, 0.08), transparent 28%),
+              var(--page-base);
+            color: var(--ink-900);
+            font-family: "Inter", "PingFang SC", "Microsoft YaHei UI", -apple-system, BlinkMacSystemFont, sans-serif;
+            padding: 16px;
           }
           .card {
             width: min(520px, calc(100% - 40px));
-            background: white;
+            background: var(--surface-base);
             border-radius: 24px;
             padding: 28px;
-            box-shadow: 0 16px 60px rgba(50, 45, 37, 0.12);
+            border: var(--border-soft);
+            box-shadow: var(--shadow-sm);
           }
-          h1 { margin-top: 0; }
-          p { line-height: 1.7; color: #6b5f52; }
+          .eyebrow {
+            display: inline-flex;
+            align-items: center;
+            min-height: 28px;
+            padding: 0 12px;
+            border-radius: 999px;
+            background: var(--brand-050);
+            color: var(--brand-700);
+            font-size: 12px;
+            line-height: 16px;
+            font-weight: 600;
+          }
+          h1 {
+            margin: 16px 0 10px;
+            font-size: 28px;
+            line-height: 1.2;
+          }
+          p {
+            margin: 0;
+            line-height: 1.7;
+            color: var(--ink-700);
+            font-size: 14px;
+          }
         </style>
       </head>
       <body>
         <div class="card">
+          <span class="eyebrow">链接状态异常</span>
           <h1>这个上传链接不可用了</h1>
           <p>可能是链接填写错误，或者该批次已经被删除。请联系收集货盘的人重新发送正确链接。</p>
         </div>
