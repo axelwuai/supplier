@@ -58,10 +58,19 @@
                 </div>
 
                 <div class="dual-actions qjl-primary-actions">
-                  <button type="button" id="qjl-login-start" class="btn-primary btn-md">开始登录</button>
+                  <button
+                    type="button"
+                    id="qjl-login-start"
+                    class="btn-primary btn-md"
+                    aria-haspopup="menu"
+                    aria-expanded="false"
+                    aria-controls="qjl-homepage-menu"
+                  >
+                    开始登录
+                  </button>
                   <button type="button" id="qjl-login-check" class="btn-ghost btn-md">检查登录</button>
                 </div>
-                <div id="qjl-homepage-menu" class="homepage-floating-menu" hidden></div>
+                <div id="qjl-homepage-menu" class="homepage-floating-menu" role="menu" hidden></div>
 
                 <div class="dual-actions compact-actions">
                   <button type="button" id="qjl-refresh-profile" class="btn-ghost btn-sm">更新画像</button>
@@ -155,7 +164,6 @@
                 <input type="checkbox" id="toggle-all-uploads" />
                 <span>全选</span>
               </label>
-              <span id="selected-upload-count" class="selection-count">已选 0 份</span>
             </div>
 
             <div id="upload-table" class="table-wrap workspace-table-wrap"></div>
@@ -169,42 +177,80 @@
         <section class="panel workspace-panel detail-panel">
           <div class="workspace-panel-head">
             <h3>AI对话</h3>
-          </div>
-
-          <div id="empty-state" class="empty-state minimalist-empty-state">
-            <div class="empty-state-copy">
-              <strong>等待开始分析</strong>
-              <p>先在左侧勾选货盘，或新建一个批次，再把需求发送给 AI。</p>
+            <div class="workspace-panel-actions">
+              <button
+                type="button"
+                id="toggle-detail-fullscreen"
+                class="toolbar-icon-button"
+                aria-label="全屏查看 AI 对话"
+                aria-expanded="false"
+                aria-controls="detail-fullscreen-modal"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M8.25 3.75a.75.75 0 0 1 0 1.5h-2.5c-.69 0-1.25.56-1.25 1.25V9a.75.75 0 0 1-1.5 0V6.5a2.75 2.75 0 0 1 2.75-2.75h2.5Zm7.5 0h2.5A2.75 2.75 0 0 1 21 6.5V9a.75.75 0 0 1-1.5 0V6.5c0-.69-.56-1.25-1.25-1.25h-2.5a.75.75 0 0 1 0-1.5Zm-12 10.5a.75.75 0 0 1 .75.75v2.5c0 .69.56 1.25 1.25 1.25h2.5a.75.75 0 0 1 0 1.5h-2.5A2.75 2.75 0 0 1 3 17.5V15a.75.75 0 0 1 .75-.75Zm16.5 0A.75.75 0 0 1 21 15v2.5a2.75 2.75 0 0 1-2.75 2.75h-2.5a.75.75 0 0 1 0-1.5h2.5c.69 0 1.25-.56 1.25-1.25V15a.75.75 0 0 1 .75-.75Z"
+                    fill="currentColor"
+                  />
+                </svg>
+              </button>
             </div>
           </div>
 
-          <div id="detail-content" class="chat-workspace" hidden>
-            <div class="detail-header chat-topbar">
-              <div>
-                <span class="hero-badge" id="detail-badge">当前批次</span>
-                <h2 id="detail-name"></h2>
-                <p id="detail-description"></p>
+          <div id="detail-panel-body" class="detail-panel-body">
+            <div id="empty-state" class="empty-state minimalist-empty-state">
+              <div class="empty-state-copy">
+                <strong>等待开始分析</strong>
+                <p>先在左侧勾选货盘，或新建一个批次，再把需求发送给 AI。</p>
               </div>
-              <button type="button" id="clear-chat" class="link-button">清空对话</button>
             </div>
 
-            <section class="chat-panel workspace-chat-panel">
-              <div id="chat-selection-status" class="chat-selection-status"></div>
-              <div id="chat-messages" class="chat-messages"></div>
-
-              <form id="chat-form" class="chat-composer">
-                <textarea
-                  id="chat-input"
-                  name="message"
-                  rows="3"
-                  placeholder="输入你想让 AI 分析的问题，比如：比较这些货盘的价格带、品类覆盖和风险点"
-                ></textarea>
-                <div class="chat-composer-footer">
-                  <span class="chat-composer-hint">Shift + Enter 换行</span>
-                  <button type="submit" class="btn-primary btn-md">发送</button>
+            <div id="detail-content" class="chat-workspace" hidden>
+              <div class="detail-header chat-topbar">
+                <div>
+                  <span class="hero-badge" id="detail-badge">当前批次</span>
+                  <h2 id="detail-name"></h2>
+                  <p id="detail-description"></p>
                 </div>
-              </form>
-            </section>
+                <button type="button" id="clear-chat" class="link-button">清空对话</button>
+              </div>
+
+              <section class="chat-panel workspace-chat-panel">
+                <div id="chat-selection-status" class="chat-selection-status"></div>
+                <div id="chat-messages" class="chat-messages"></div>
+
+                <form id="chat-form" class="chat-composer">
+                  <textarea
+                    id="chat-input"
+                    name="message"
+                    rows="3"
+                    aria-label="AI 分析问题输入框"
+                    placeholder="输入你想让 AI 分析的问题，比如：比较这些货盘的价格带、品类覆盖和风险点"
+                  ></textarea>
+                  <div class="chat-composer-footer">
+                    <span class="chat-composer-hint">Shift + Enter 换行</span>
+                    <button
+                      type="submit"
+                      id="chat-submit"
+                      class="btn-primary btn-md"
+                      aria-label="发送"
+                      title="发送"
+                      disabled
+                    >
+                      <svg viewBox="0 0 20 20" aria-hidden="true">
+                        <path
+                          d="M10 15V5m0 0-4 4m4-4 4 4"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="1.9"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                </form>
+              </section>
+            </div>
           </div>
         </section>
 
@@ -232,18 +278,18 @@
 
           <div id="compare-body" class="workspace-panel-body compare-body">
             <form id="compare-form" class="compare-form">
-              <input type="text" name="keyword" placeholder="搜索商品名 / SKU / 规格 / 供应商" />
-              <select name="source">
+              <input type="text" name="keyword" aria-label="搜索商品关键词" placeholder="搜索商品名 / SKU / 规格 / 供应商" />
+              <select name="source" aria-label="比价来源">
                 <option value="local">当前货盘</option>
                 <option value="1688">1688</option>
                 <option value="jd">京东</option>
                 <option value="taobao">淘宝</option>
               </select>
-              <select name="matchMode">
+              <select name="matchMode" aria-label="比价匹配范围">
                 <option value="brand_style" selected>相同品牌 + 款式</option>
                 <option value="all">全部结果</option>
               </select>
-              <select name="groupBy">
+              <select name="groupBy" aria-label="比价分组方式">
                 <option value="smart">智能分组</option>
                 <option value="sku">优先按 SKU</option>
                 <option value="name">按商品名 + 规格</option>
@@ -328,6 +374,39 @@
           </div>
 
           <div id="compare-fullscreen-target" class="compare-fullscreen-target"></div>
+        </div>
+      </section>
+
+      <section id="detail-fullscreen-modal" class="modal-shell compare-modal-shell" hidden aria-hidden="true">
+        <div class="modal-backdrop" data-close-detail-fullscreen="true"></div>
+        <div
+          id="detail-fullscreen-card"
+          class="modal-card compare-modal-card"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="detail-fullscreen-title"
+        >
+          <div class="compare-modal-head">
+            <div>
+              <strong id="detail-fullscreen-title">AI对话</strong>
+              <span>完整展示当前批次说明、对话消息和输入区，方便连续查看与提问。</span>
+            </div>
+            <button
+              type="button"
+              id="close-detail-fullscreen"
+              class="toolbar-icon-button modal-icon-button"
+              aria-label="取消全屏查看 AI 对话"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M8.75 3a.75.75 0 0 1 .75.75V7a.75.75 0 0 1-1.5 0V5.56L4.28 9.28a.75.75 0 1 1-1.06-1.06L6.94 4.5H5.5a.75.75 0 0 1 0-1.5h3.25Zm6.5 0h3.25a.75.75 0 0 1 0 1.5h-1.44l3.72 3.72a.75.75 0 1 1-1.06 1.06L15.5 5.56V7a.75.75 0 0 1-1.5 0V3.75a.75.75 0 0 1 .75-.75Zm-6 10.5a.75.75 0 0 1 .75.75v3.19l3.72-3.72a.75.75 0 1 1 1.06 1.06L10.56 19H12a.75.75 0 0 1 0 1.5H8.75A.75.75 0 0 1 8 19.75v-5.5a.75.75 0 0 1 .75-.75Zm5.25.75a.75.75 0 0 1 1.5 0v3.19l3.72-3.72a.75.75 0 1 1 1.06 1.06L17.06 19h1.44a.75.75 0 0 1 0 1.5h-3.25a.75.75 0 0 1-.75-.75v-5.5Z"
+                  fill="currentColor"
+                />
+              </svg>
+            </button>
+          </div>
+
+          <div id="detail-fullscreen-target" class="compare-fullscreen-target detail-fullscreen-target"></div>
         </div>
       </section>
     </div>

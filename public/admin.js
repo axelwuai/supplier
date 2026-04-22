@@ -44,8 +44,13 @@ const detailAiStatus = document.getElementById("detail-ai-status");
 const uploadTable = document.getElementById("upload-table");
 const refreshUploads = document.getElementById("refresh-uploads");
 const toggleAllUploads = document.getElementById("toggle-all-uploads");
-const selectedUploadCount = document.getElementById("selected-upload-count");
 const sendSelectedToAiButton = document.getElementById("send-selected-to-ai");
+const detailPanelBody = document.getElementById("detail-panel-body");
+const toggleDetailFullscreenButton = document.getElementById("toggle-detail-fullscreen");
+const detailFullscreenModal = document.getElementById("detail-fullscreen-modal");
+const detailFullscreenCard = document.getElementById("detail-fullscreen-card");
+const detailFullscreenTarget = document.getElementById("detail-fullscreen-target");
+const closeDetailFullscreenButton = document.getElementById("close-detail-fullscreen");
 const compareBody = document.getElementById("compare-body");
 const compareForm = document.getElementById("compare-form");
 const compareResult = document.getElementById("compare-result");
@@ -59,6 +64,7 @@ const chatSelectionStatus = document.getElementById("chat-selection-status");
 const chatMessages = document.getElementById("chat-messages");
 const chatForm = document.getElementById("chat-form");
 const chatInput = document.getElementById("chat-input");
+const chatSubmitButton = document.getElementById("chat-submit");
 const productForm = document.getElementById("product-form");
 const refreshProducts = document.getElementById("refresh-products");
 const productSummary = document.getElementById("product-summary");
@@ -94,17 +100,28 @@ const compareFullscreenState = {
   placeholder: null
 };
 
+const detailFullscreenState = {
+  open: false,
+  placeholder: null
+};
+
 init();
 
 async function init() {
+  if (qjlHomepageMenu && qjlHomepageMenu.parentElement !== document.body) {
+    document.body.appendChild(qjlHomepageMenu);
+  }
+
   initWorkspaceResizer();
   initUploadEntry();
+  initDetailFullscreen();
   initCompareFullscreen();
   initPanelCollapse();
   await loadAiStatus();
   await loadQjlAccount();
   await loadCollections();
   await renderUploads();
+  updateChatSubmitState();
 
   const collectionId = new URLSearchParams(window.location.search).get("collectionId");
   if (collectionId) {
@@ -196,8 +213,7 @@ function initUploadEntry() {
     }
 
     if (event.key === "Escape" && qjlState.homepageSwitcherOpen) {
-      qjlState.homepageSwitcherOpen = false;
-      renderQjlAuthState();
+      closeQjlHomepageMenu();
     }
   });
 
@@ -215,8 +231,34 @@ function initUploadEntry() {
       return;
     }
 
-    qjlState.homepageSwitcherOpen = false;
-    renderQjlAuthState();
+    closeQjlHomepageMenu();
+  });
+
+  window.addEventListener("resize", () => {
+    if (qjlState.homepageSwitcherOpen) {
+      syncQjlHomepageMenuPosition();
+    }
+  });
+
+  window.addEventListener(
+    "scroll",
+    () => {
+      if (qjlState.homepageSwitcherOpen) {
+        syncQjlHomepageMenuPosition();
+      }
+    },
+    true
+  );
+
+  settingsDetails?.addEventListener("toggle", () => {
+    if (!settingsDetails.open) {
+      closeQjlHomepageMenu();
+      return;
+    }
+
+    if (qjlState.homepageSwitcherOpen) {
+      syncQjlHomepageMenuPosition();
+    }
   });
 
   setUploadEntryOpen(false);
@@ -250,7 +292,7 @@ function initCompareFullscreen() {
         compareFullscreenTarget.appendChild(compareBody);
       }
 
-      syncCompareFullscreenWidth();
+      syncFullscreenCardWidth(compareFullscreenCard);
       closeCompareFullscreenButton?.focus();
     } else {
       if (compareFullscreenState.placeholder?.parentNode) {
@@ -286,15 +328,86 @@ function initCompareFullscreen() {
 
   window.addEventListener("resize", () => {
     if (compareFullscreenState.open) {
-      syncCompareFullscreenWidth();
+      syncFullscreenCardWidth(compareFullscreenCard);
     }
   });
 
   setCompareFullscreenOpen(false);
 }
 
-function syncCompareFullscreenWidth() {
-  if (!compareFullscreenCard) {
+function initDetailFullscreen() {
+  if (
+    !toggleDetailFullscreenButton ||
+    !detailPanelBody ||
+    !detailFullscreenModal ||
+    !detailFullscreenCard ||
+    !detailFullscreenTarget
+  ) {
+    return;
+  }
+
+  const setDetailFullscreenOpen = (open) => {
+    detailFullscreenState.open = open;
+    detailFullscreenModal.hidden = !open;
+    detailFullscreenModal.setAttribute("aria-hidden", open ? "false" : "true");
+    detailFullscreenModal.classList.toggle("is-open", open);
+    toggleDetailFullscreenButton.setAttribute("aria-expanded", open ? "true" : "false");
+
+    if (open) {
+      if (!detailFullscreenState.placeholder) {
+        detailFullscreenState.placeholder = document.createComment("detail-panel-body-placeholder");
+      }
+
+      if (detailPanelBody.parentNode !== detailFullscreenTarget) {
+        detailPanelBody.replaceWith(detailFullscreenState.placeholder);
+        detailFullscreenTarget.appendChild(detailPanelBody);
+      }
+
+      syncFullscreenCardWidth(detailFullscreenCard);
+      closeDetailFullscreenButton?.focus();
+    } else {
+      if (detailFullscreenState.placeholder?.parentNode) {
+        detailFullscreenState.placeholder.replaceWith(detailPanelBody);
+      }
+      detailFullscreenCard.style.removeProperty("width");
+    }
+
+    syncBodyModalState();
+  };
+
+  toggleDetailFullscreenButton.addEventListener("click", () => {
+    setDetailFullscreenOpen(!detailFullscreenState.open);
+  });
+
+  closeDetailFullscreenButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    setDetailFullscreenOpen(false);
+  });
+
+  detailFullscreenModal.addEventListener("click", (event) => {
+    const target = event.target;
+    if (target instanceof HTMLElement && target.dataset.closeDetailFullscreen === "true") {
+      setDetailFullscreenOpen(false);
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && detailFullscreenState.open) {
+      setDetailFullscreenOpen(false);
+    }
+  });
+
+  window.addEventListener("resize", () => {
+    if (detailFullscreenState.open) {
+      syncFullscreenCardWidth(detailFullscreenCard);
+    }
+  });
+
+  setDetailFullscreenOpen(false);
+}
+
+function syncFullscreenCardWidth(card) {
+  if (!card) {
     return;
   }
 
@@ -305,7 +418,7 @@ function syncCompareFullscreenWidth() {
   }
 
   const maxWidth = window.innerWidth - 40;
-  compareFullscreenCard.style.width = `${Math.round(Math.min(width, maxWidth))}px`;
+  card.style.width = `${Math.round(Math.min(width, maxWidth))}px`;
 }
 
 function initWorkspaceResizer() {
@@ -651,6 +764,7 @@ if (sendSelectedToAiButton) {
     const cursor = chatInput.value.length;
     chatInput.setSelectionRange(cursor, cursor);
     chatInput.scrollIntoView({ behavior: "smooth", block: "center" });
+    updateChatSubmitState();
   });
 }
 
@@ -692,12 +806,15 @@ chatForm.addEventListener("submit", async (event) => {
   }
 
   chatInput.value = "";
+  updateChatSubmitState();
   await submitUploadChat(message, {
     source: "chat",
-    pendingButton: chatForm.querySelector("button[type='submit']"),
-    pendingText: "分析中...",
-    idleText: "发送"
+    pendingButton: chatSubmitButton
   });
+});
+
+chatInput?.addEventListener("input", () => {
+  updateChatSubmitState();
 });
 
 chatInput?.addEventListener("keydown", (event) => {
@@ -705,9 +822,22 @@ chatInput?.addEventListener("keydown", (event) => {
     return;
   }
 
+  if (!String(chatInput.value || "").trim()) {
+    return;
+  }
+
   event.preventDefault();
   chatForm.requestSubmit();
 });
+
+function updateChatSubmitState(forceDisabled = false) {
+  if (!chatSubmitButton || !chatInput) {
+    return;
+  }
+
+  const hasMessage = Boolean(String(chatInput.value || "").trim());
+  chatSubmitButton.disabled = forceDisabled || !hasMessage;
+}
 
 function buildSelectedUploadsDraft(selectedUploads, existingMessage = "") {
   const lines = selectedUploads.map(
@@ -741,10 +871,10 @@ async function submitUploadChat(message, options = {}) {
   renderChatPanel("", true);
 
   const button = options.pendingButton || null;
-  const idleText = options.idleText || button?.textContent || "";
   if (button) {
+    button.classList.add("is-pending");
+    button.setAttribute("aria-busy", "true");
     button.disabled = true;
-    button.textContent = options.pendingText || "处理中...";
   }
 
   try {
@@ -784,9 +914,10 @@ async function submitUploadChat(message, options = {}) {
     renderChatPanel();
   } finally {
     if (button) {
-      button.disabled = false;
-      button.textContent = idleText;
+      button.classList.remove("is-pending");
+      button.removeAttribute("aria-busy");
     }
+    updateChatSubmitState();
   }
 }
 
@@ -891,20 +1022,71 @@ function applyQjlAccount(data) {
   }
 }
 
+function closeQjlHomepageMenu() {
+  if (!qjlState.homepageSwitcherOpen) {
+    return;
+  }
+
+  qjlState.homepageSwitcherOpen = false;
+  renderQjlAuthState();
+}
+
+function syncQjlHomepageMenuPosition() {
+  if (!qjlHomepageMenu || qjlHomepageMenu.hidden || !qjlLoginStartButton) {
+    return;
+  }
+
+  const buttonRect = qjlLoginStartButton.getBoundingClientRect();
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  const inset = 12;
+  const menuWidth = Math.min(Math.max(buttonRect.width, 300), viewportWidth - inset * 2);
+  const maxHeight = Math.max(180, Math.min(360, viewportHeight - inset * 2));
+  let left = buttonRect.left;
+
+  if (left + menuWidth > viewportWidth - inset) {
+    left = viewportWidth - inset - menuWidth;
+  }
+
+  left = Math.max(inset, left);
+
+  qjlHomepageMenu.style.setProperty("--homepage-menu-left", `${Math.round(left)}px`);
+  qjlHomepageMenu.style.setProperty("--homepage-menu-width", `${Math.round(menuWidth)}px`);
+  qjlHomepageMenu.style.setProperty("--homepage-menu-max-height", `${Math.round(maxHeight)}px`);
+
+  const menuHeight = Math.min(qjlHomepageMenu.scrollHeight || maxHeight, maxHeight);
+  const spaceBelow = viewportHeight - buttonRect.bottom - 8;
+  const spaceAbove = buttonRect.top - 8;
+  const openAbove = spaceBelow < Math.min(menuHeight, 220) && spaceAbove > spaceBelow;
+  let top = openAbove ? buttonRect.top - menuHeight - 8 : buttonRect.bottom + 8;
+
+  top = Math.max(inset, Math.min(top, viewportHeight - menuHeight - inset));
+  qjlHomepageMenu.style.setProperty("--homepage-menu-top", `${Math.round(top)}px`);
+}
+
 function renderQjlAuthState(message) {
   if (!qjlAuthStatus) {
     return;
   }
 
+  let statusText = "";
+  let showStatus = true;
+
   if (message) {
-    qjlAuthStatus.textContent = message;
+    statusText = message;
   } else if (qjlState.loggedIn && qjlState.account) {
-    const account = qjlState.account;
-    qjlAuthStatus.textContent = account.profileSummary || `已登录 ${account.ghName || account.uid}`;
+    showStatus = false;
   } else if (qjlState.pendingLogin) {
-    qjlAuthStatus.textContent = "已生成登录链接。完成群接龙登录后，点击“检查登录”即可同步状态。";
+    statusText = "已生成登录链接。完成群接龙登录后，点击“检查登录”即可同步状态。";
   } else {
-    qjlAuthStatus.textContent = "登录后会基于群接龙主页信息生成用户画像，并在货盘分析时自动带入。";
+    statusText = "登录后会基于群接龙主页信息生成用户画像，并在货盘分析时自动带入。";
+  }
+
+  qjlAuthStatus.hidden = !showStatus;
+  if (showStatus) {
+    qjlAuthStatus.textContent = statusText;
+  } else {
+    qjlAuthStatus.textContent = "";
   }
 
   if (qjlAuthSummary) {
@@ -917,6 +1099,10 @@ function renderQjlAuthState(message) {
 
   if (qjlLoginStartButton) {
     qjlLoginStartButton.textContent = qjlState.loggedIn ? "切换主页" : "开始登录";
+    qjlLoginStartButton.setAttribute(
+      "aria-expanded",
+      qjlState.loggedIn && qjlState.homepageSwitcherOpen ? "true" : "false"
+    );
   }
 
   if (qjlLoginLink) {
@@ -969,36 +1155,54 @@ function renderQjlHomepageMenu(account) {
 
   if (!qjlState.loggedIn || !qjlState.homepageSwitcherOpen) {
     qjlHomepageMenu.hidden = true;
+    qjlHomepageMenu.classList.remove("is-open");
     return;
   }
 
   const homes = Array.isArray(account?.homepageList) ? account.homepageList : [];
   qjlHomepageMenu.hidden = false;
+  qjlHomepageMenu.classList.add("is-open");
 
   if (!homes.length) {
-    qjlHomepageMenu.innerHTML = `<div class="homepage-menu-empty">当前没有可切换的主页。</div>`;
+    qjlHomepageMenu.innerHTML = `
+      <div class="homepage-menu-head">
+        <strong>切换主页</strong>
+        <span>0 个主页</span>
+      </div>
+      <div class="homepage-menu-empty">当前没有可切换的主页。</div>
+    `;
+    syncQjlHomepageMenuPosition();
     return;
   }
 
-  qjlHomepageMenu.innerHTML = homes
-    .map((home) => {
-      const isCurrent = home.ghCode === account.ghId;
-      const stats = [home.fansNum ? `粉丝 ${home.fansNum}` : "", home.orderNum ? `订单 ${home.orderNum}` : ""]
-        .filter(Boolean)
-        .join(" · ");
-      return `
-        <button
-          type="button"
-          class="homepage-menu-item ${isCurrent ? "active-homepage" : ""}"
-          data-gh-code="${escapeHtml(home.ghCode)}"
-          ${isCurrent ? "disabled" : ""}
-        >
-          <strong>${escapeHtml(home.ghName || home.ghCode)}${isCurrent ? "（当前）" : ""}</strong>
-          <span>${escapeHtml(stats || home.ghCode)}</span>
-        </button>
-      `;
-    })
-    .join("");
+  qjlHomepageMenu.innerHTML = `
+    <div class="homepage-menu-head">
+      <strong>切换主页</strong>
+      <span>${homes.length} 个主页</span>
+    </div>
+    <div class="homepage-menu-list">
+      ${homes
+        .map((home) => {
+          const isCurrent = home.ghCode === account.ghId;
+          const stats = [home.fansNum ? `粉丝 ${home.fansNum}` : "", home.orderNum ? `订单 ${home.orderNum}` : ""]
+            .filter(Boolean)
+            .join(" · ");
+          return `
+            <button
+              type="button"
+              class="homepage-menu-item ${isCurrent ? "active-homepage" : ""}"
+              data-gh-code="${escapeHtml(home.ghCode)}"
+              ${isCurrent ? "disabled" : ""}
+            >
+              <strong>${escapeHtml(home.ghName || home.ghCode)}${isCurrent ? "（当前）" : ""}</strong>
+              <span>${escapeHtml(stats || home.ghCode)}</span>
+            </button>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+  syncQjlHomepageMenuPosition();
 
   for (const button of qjlHomepageMenu.querySelectorAll("[data-gh-code]")) {
     button.addEventListener("click", async () => {
@@ -1026,7 +1230,7 @@ function renderQjlHomepageMenu(account) {
         }
 
         applyQjlAccount(data);
-        qjlState.homepageSwitcherOpen = false;
+        closeQjlHomepageMenu();
         renderQjlAuthState(data.message || "已切换群接龙主页。");
         if (state.activeCollection) {
           updateActiveCollectionCopy();
@@ -1418,10 +1622,6 @@ function updateUploadSelectionUi(items) {
   const total = items.length;
   const selected = selectedIds.length;
 
-  if (selectedUploadCount) {
-    selectedUploadCount.textContent = `已选 ${selected} 份`;
-  }
-
   if (toggleAllUploads) {
     toggleAllUploads.checked = total > 0 && selected === total;
     toggleAllUploads.indeterminate = selected > 0 && selected < total;
@@ -1575,18 +1775,20 @@ function renderMarkdownTable(tableLines) {
   const body = rows.slice(2);
 
   return `
-    <table>
-      <thead>
-        <tr>${header.map((cell) => `<th>${renderInlineMarkdown(cell)}</th>`).join("")}</tr>
-      </thead>
-      <tbody>
-        ${body
-          .map(
-            (row) => `<tr>${row.map((cell) => `<td>${renderInlineMarkdown(cell)}</td>`).join("")}</tr>`
-          )
-          .join("")}
-      </tbody>
-    </table>
+    <div class="chat-table-scroll">
+      <table>
+        <thead>
+          <tr>${header.map((cell) => `<th>${renderInlineMarkdown(cell)}</th>`).join("")}</tr>
+        </thead>
+        <tbody>
+          ${body
+            .map(
+              (row) => `<tr>${row.map((cell) => `<td>${renderInlineMarkdown(cell)}</td>`).join("")}</tr>`
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>
   `;
 }
 
